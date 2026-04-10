@@ -557,8 +557,79 @@ html, body {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
+  margin-bottom: 0;
+}
+
+.sim-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 8px;
 }
+
+.sim-reset-inline {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 10px;
+  border: none;
+  border-radius: 20px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sim-reset-inline:active { transform: scale(0.93); }
+.sim-reset-inline:hover { background: var(--accent); color: #fff; }
+.sim-reset-inline:hover svg { stroke: #fff; }
+
+.sim-row-changed {
+  position: relative;
+}
+
+.sim-input-changed {
+  border-color: var(--accent) !important;
+  background: var(--accent-dim) !important;
+  color: var(--accent) !important;
+}
+
+.sim-diff {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sim-diff span {
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.sim-reset-all {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sim-reset-all:active { transform: scale(0.97); }
+.sim-reset-all:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 
 .sim-result {
   display: grid;

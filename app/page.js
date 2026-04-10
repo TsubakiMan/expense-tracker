@@ -593,7 +593,11 @@ function ForecastView({ rows, labels }) {
   const [simIncome, setSimIncome] = useState(defaultIncome);
   const [simExpense, setSimExpense] = useState(defaultExpense);
 
-  const isChanged = simIncome !== defaultIncome || simExpense !== defaultExpense;
+  const incomeChanged = simIncome !== defaultIncome;
+  const expenseChanged = simExpense !== defaultExpense;
+  const isChanged = incomeChanged || expenseChanged;
+  const incomeDiff = simIncome - defaultIncome;
+  const expenseDiff = simExpense - defaultExpense;
 
   const projection = useMemo(() => {
     if (rows.length === 0) return [];
@@ -638,26 +642,64 @@ function ForecastView({ rows, labels }) {
       <div className="section">
         <div className="section-title">Simulation</div>
         <div className="sim-control">
-          <div className="sim-label">月収 (Income)</div>
-          <div className="sim-row">
+          <div className="sim-label-row">
+            <span className="sim-label">月収 (Income)</span>
+            {incomeChanged && (
+              <button className="sim-reset-inline" onClick={() => setSimIncome(defaultIncome)}>
+                <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M4.49 9A8 8 0 0120 12M19.51 15A8 8 0 014 12" />
+                </svg>
+                戻す
+              </button>
+            )}
+          </div>
+          <div className={`sim-row ${incomeChanged ? 'sim-row-changed' : ''}`}>
             <button className="sim-btn" onClick={() => setSimIncome(v => Math.max(0, v - 10000))}>-</button>
-            <input className="sim-input" type="number" inputMode="numeric"
+            <input className={`sim-input ${incomeChanged ? 'sim-input-changed' : ''}`} type="number" inputMode="numeric"
               value={simIncome} onChange={e => setSimIncome(Number(e.target.value) || 0)} />
             <button className="sim-btn" onClick={() => setSimIncome(v => v + 10000)}>+</button>
           </div>
+          {incomeChanged && (
+            <div className="sim-diff">
+              ベース {formatYen(defaultIncome)} → {formatYen(simIncome)}
+              <span className={incomeDiff >= 0 ? 'text-success' : 'text-danger'}>
+                ({incomeDiff >= 0 ? '+' : ''}{formatYen(incomeDiff)})
+              </span>
+            </div>
+          )}
 
-          <div className="sim-label" style={{ marginTop: 14 }}>月間支出 (Expense)</div>
-          <div className="sim-row">
+          <div className="sim-label-row" style={{ marginTop: 14 }}>
+            <span className="sim-label">月間支出 (Expense)</span>
+            {expenseChanged && (
+              <button className="sim-reset-inline" onClick={() => setSimExpense(defaultExpense)}>
+                <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M4.49 9A8 8 0 0120 12M19.51 15A8 8 0 014 12" />
+                </svg>
+                戻す
+              </button>
+            )}
+          </div>
+          <div className={`sim-row ${expenseChanged ? 'sim-row-changed' : ''}`}>
             <button className="sim-btn" onClick={() => setSimExpense(v => Math.max(0, v - 10000))}>-</button>
-            <input className="sim-input" type="number" inputMode="numeric"
+            <input className={`sim-input ${expenseChanged ? 'sim-input-changed' : ''}`} type="number" inputMode="numeric"
               value={simExpense} onChange={e => setSimExpense(Number(e.target.value) || 0)} />
             <button className="sim-btn" onClick={() => setSimExpense(v => v + 10000)}>+</button>
           </div>
+          {expenseChanged && (
+            <div className="sim-diff">
+              ベース {formatYen(defaultExpense)} → {formatYen(simExpense)}
+              <span className={expenseDiff <= 0 ? 'text-success' : 'text-danger'}>
+                ({expenseDiff >= 0 ? '+' : ''}{formatYen(expenseDiff)})
+              </span>
+            </div>
+          )}
 
           {isChanged && (
-            <button className="btn btn-secondary" style={{ marginTop: 12, padding: '8px 12px', fontSize: 12 }}
-              onClick={() => { setSimIncome(defaultIncome); setSimExpense(defaultExpense); }}>
-              リセット
+            <button className="sim-reset-all" onClick={() => { setSimIncome(defaultIncome); setSimExpense(defaultExpense); }}>
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M4.49 9A8 8 0 0120 12M19.51 15A8 8 0 014 12" />
+              </svg>
+              すべてリセット
             </button>
           )}
 
