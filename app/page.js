@@ -398,8 +398,28 @@ export default function Home() {
       const cm = currentMonth();
       const idx = (result.rows || []).findIndex(r => r.date === cm);
       setCurrentIdx(idx >= 0 ? idx : Math.max(0, (result.rows || []).length - 1));
-      if (settingsResult.settings) {
-        setCloudSettings(settingsResult.settings);
+
+      const cloud = settingsResult.settings || {};
+      const SETTINGS_KEYS = ['customLabels', 'categoryConfig', 'expenseGroups', 'customCategories'];
+      const cloudHasData = SETTINGS_KEYS.some(k => cloud[k]);
+
+      if (cloudHasData) {
+        // Cloud has settings — use as source of truth
+        setCloudSettings(cloud);
+      }
+
+      // Always push local settings that cloud doesn't have yet
+      const localSettings = {};
+      SETTINGS_KEYS.forEach(k => {
+        if (!cloud[k]) {
+          try {
+            const val = localStorage.getItem(k);
+            if (val) localSettings[k] = JSON.parse(val);
+          } catch {}
+        }
+      });
+      if (Object.keys(localSettings).length > 0) {
+        saveSettings(localSettings).catch(() => {});
       }
     } catch {
       setRows(DEMO_ROWS);
