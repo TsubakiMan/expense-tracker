@@ -1230,41 +1230,48 @@ html, body {
 
 /* ── Category Management ── */
 
+.cat-list {
+  position: relative;
+}
+
 .cat-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
+  padding: 8px 0;
   border-bottom: 1px solid var(--border);
+  transition: background 0.15s, box-shadow 0.15s, opacity 0.15s;
+  user-select: none;
 }
 
 .cat-item:last-of-type { border-bottom: none; }
 
-.cat-item-arrows {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex-shrink: 0;
+.cat-item-dragging {
+  opacity: 0.4;
 }
 
-.cat-arrow {
+.cat-item-drop-target {
+  background: var(--accent-dim);
+  border-radius: var(--radius-xs);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.cat-drag-handle {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 16px;
-  border: none;
-  background: var(--bg);
-  border-radius: 4px;
+  width: 28px;
+  height: 36px;
   color: var(--text-muted);
-  cursor: pointer;
-  transition: all 0.15s;
-  padding: 0;
+  cursor: grab;
+  flex-shrink: 0;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+  touch-action: none;
 }
 
-.cat-arrow:active { transform: scale(0.85); }
-.cat-arrow:hover:not(:disabled) { background: var(--accent-dim); color: var(--accent); }
-.cat-arrow:disabled { opacity: 0.2; cursor: default; }
+.cat-drag-handle:hover { color: var(--accent); background: var(--accent-dim); }
+.cat-drag-handle:active { cursor: grabbing; }
 
 .cat-item-input {
   flex: 1;

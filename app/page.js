@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { fetchAllData, updateRow, addRow } from '../lib/api';
 import {
   formatYen, formatMonth, formatShortMonth, currentMonth, addMonths,
@@ -857,6 +857,123 @@ function EditModal({ item, onSave, onClose, saving }) {
   );
 }
 
+// ── Drag & Drop Reorder List ──
+function DragList({ items, onReorder, renderItem }) {
+  const [dragIdx, setDragIdx] = useState(null);
+  const [overIdx, setOverIdx] = useState(null);
+  const dragY = useRef(0);
+  const listRef = useRef(null);
+  const itemRects = useRef([]);
+
+  const calcOverIdx = (clientY) => {
+    for (let i = 0; i < itemRects.current.length; i++) {
+      const r = itemRects.current[i];
+      if (clientY < r.top + r.height / 2) return i;
+    }
+    return itemRects.current.length - 1;
+  };
+
+  const captureRects = () => {
+    if (!listRef.current) return;
+    const children = listRef.current.querySelectorAll('.cat-item');
+    itemRects.current = Array.from(children).map(el => {
+      const rect = el.getBoundingClientRect();
+      return { top: rect.top, height: rect.height };
+    });
+  };
+
+  // Touch handlers
+  const onTouchStart = (idx, e) => {
+    captureRects();
+    setDragIdx(idx);
+    setOverIdx(idx);
+    dragY.current = e.touches[0].clientY;
+  };
+
+  const onTouchMove = useCallback((e) => {
+    if (dragIdx === null) return;
+    e.preventDefault();
+    const y = e.touches[0].clientY;
+    setOverIdx(calcOverIdx(y));
+  }, [dragIdx]);
+
+  const onTouchEnd = useCallback(() => {
+    if (dragIdx !== null && overIdx !== null && dragIdx !== overIdx) {
+      onReorder(dragIdx, overIdx);
+    }
+    setDragIdx(null);
+    setOverIdx(null);
+  }, [dragIdx, overIdx, onReorder]);
+
+  useEffect(() => {
+    if (dragIdx === null) return;
+    const opts = { passive: false };
+    document.addEventListener('touchmove', onTouchMove, opts);
+    document.addEventListener('touchend', onTouchEnd);
+    return () => {
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
+    };
+  }, [dragIdx, onTouchMove, onTouchEnd]);
+
+  // Mouse drag handlers
+  const onMouseDown = (idx, e) => {
+    e.preventDefault();
+    captureRects();
+    setDragIdx(idx);
+    setOverIdx(idx);
+  };
+
+  const onMouseMove = useCallback((e) => {
+    if (dragIdx === null) return;
+    setOverIdx(calcOverIdx(e.clientY));
+  }, [dragIdx]);
+
+  const onMouseUp = useCallback(() => {
+    if (dragIdx !== null && overIdx !== null && dragIdx !== overIdx) {
+      onReorder(dragIdx, overIdx);
+    }
+    setDragIdx(null);
+    setOverIdx(null);
+  }, [dragIdx, overIdx, onReorder]);
+
+  useEffect(() => {
+    if (dragIdx === null) return;
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [dragIdx, onMouseMove, onMouseUp]);
+
+  return (
+    <div ref={listRef} className="cat-list">
+      {items.map((item, idx) => {
+        let cls = 'cat-item';
+        if (dragIdx !== null) {
+          if (idx === dragIdx) cls += ' cat-item-dragging';
+          if (overIdx !== null && idx === overIdx && idx !== dragIdx) cls += ' cat-item-drop-target';
+        }
+        return (
+          <div key={item} className={cls}>
+            <div className="cat-drag-handle"
+              onTouchStart={(e) => onTouchStart(idx, e)}
+              onMouseDown={(e) => onMouseDown(idx, e)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" />
+                <circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" />
+                <circle cx="9" cy="18" r="1.5" /><circle cx="15" cy="18" r="1.5" />
+              </svg>
+            </div>
+            {renderItem(item, idx)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Settings Modal ──
 function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups, catConfig, catActions, onClose }) {
   const [tab, setTab] = useState('categories');
@@ -887,37 +1004,27 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
   const hiddenExpense = EXPENSE_KEYS.filter(k => !catConfig.expense.includes(k));
 
   // Category list renderer
-  const renderCatList = (type, keys, allLabels) => {
+  const renderCatList = (type, allLabels) => {
     const items = type === 'income' ? catConfig.income : catConfig.expense;
     const hidden = type === 'income' ? hiddenIncome : hiddenExpense;
 
     return (
       <>
-        {items.map((k, idx) => (
-          <div key={k} className="cat-item">
-            <div className="cat-item-arrows">
-              <button className="cat-arrow" disabled={idx === 0}
-                onClick={() => catActions.reorder(type, idx, idx - 1)}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+        <DragList
+          items={items}
+          onReorder={(from, to) => catActions.reorder(type, from, to)}
+          renderItem={(k) => (
+            <>
+              <input className="cat-item-input" value={labels[k] || allLabels[k] || ''}
+                onChange={e => onUpdate(k, e.target.value)} />
+              <button className="cat-item-delete" onClick={() => catActions.hide(type, k)}>
+                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
-              <button className="cat-arrow" disabled={idx === items.length - 1}
-                onClick={() => catActions.reorder(type, idx, idx + 1)}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-            </div>
-            <input className="cat-item-input" value={labels[k] || allLabels[k] || ''}
-              onChange={e => onUpdate(k, e.target.value)} />
-            <button className="cat-item-delete" onClick={() => catActions.hide(type, k)}>
-              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        ))}
+            </>
+          )}
+        />
 
         {hidden.length > 0 && (
           <div style={{ marginTop: 8 }}>
@@ -970,12 +1077,12 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
 
             <div style={{ marginBottom: 16 }}>
               <div className="section-title">Income</div>
-              {renderCatList('income', catConfig.income, INCOME_LABELS)}
+              {renderCatList('income', INCOME_LABELS)}
             </div>
 
             <div style={{ marginBottom: 16 }}>
               <div className="section-title">Expenses</div>
-              {renderCatList('expense', catConfig.expense, EXPENSE_LABELS)}
+              {renderCatList('expense', EXPENSE_LABELS)}
             </div>
 
             <button className="btn btn-secondary" style={{ fontSize: 12, padding: '10px' }}
