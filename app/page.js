@@ -501,36 +501,47 @@ function InputView({ row, rows, labels, onSave, onAdd, saving, onSettings }) {
 function ForecastView({ rows, labels }) {
   const recent = rows.slice(-3);
   const defaultIncome = recent.length > 0
-    ? Math.round(recent.reduce((s, r) => s + totalIncome(r), 0) / recent.length)
-    : 200000;
+    ? Math.round(recent.reduce((s, r) => s + totalIncome(r), 0) / recent.length) : 200000;
+  const defaultExpense = recent.length > 0
+    ? Math.round(recent.reduce((s, r) => s + totalExpense(r), 0) / recent.length) : 150000;
 
   const [simIncome, setSimIncome] = useState(defaultIncome);
+  const [simExpense, setSimExpense] = useState(defaultExpense);
 
-  const avgExpense = useMemo(() => {
-    if (recent.length === 0) return 0;
-    return Math.round(recent.reduce((s, r) => s + totalExpense(r), 0) / recent.length);
-  }, [rows]);
+  const isChanged = simIncome !== defaultIncome || simExpense !== defaultExpense;
 
   const projection = useMemo(() => {
-    if (rows.length === 0) return { months: [], adjusted: [], current: [] };
+    if (rows.length === 0) return [];
     const latest = rows[rows.length - 1];
     const baseBalance = (latest.balanceHokyo || 0) + (latest.balanceRakuten || 0);
-    const months = [], adjusted = [], current = [];
-    let adjBal = baseBalance, curBal = baseBalance;
+    const result = [];
+    let adjBal = baseBalance;
+    let curBal = baseBalance;
 
     for (let i = 1; i <= 12; i++) {
-      months.push(formatShortMonth(addMonths(latest.date, i)));
-      adjBal += simIncome - avgExpense;
-      adjusted.push(adjBal);
-      curBal += defaultIncome - avgExpense;
-      current.push(curBal);
+      const date = addMonths(latest.date, i);
+      const adjSurplus = simIncome - simExpense;
+      const curSurplus = defaultIncome - defaultExpense;
+      adjBal += adjSurplus;
+      curBal += curSurplus;
+      result.push({
+        date,
+        label: formatShortMonth(date),
+        fullLabel: formatMonth(date),
+        income: simIncome,
+        expense: simExpense,
+        surplus: adjSurplus,
+        balance: adjBal,
+        currentBalance: curBal,
+      });
     }
-    return { months, adjusted, current };
-  }, [rows, simIncome, avgExpense, defaultIncome]);
+    return result;
+  }, [rows, simIncome, simExpense, defaultIncome, defaultExpense]);
 
-  const monthlySurplus = simIncome - avgExpense;
+  const monthlySurplus = simIncome - simExpense;
   const yearSavings = monthlySurplus * 12;
   const savingsRate = simIncome > 0 ? Math.round((monthlySurplus / simIncome) * 100) : 0;
+
   const histLabels = rows.map(r => formatShortMonth(r.date));
   const histData = rows.map(r => surplus(r));
 
@@ -538,16 +549,33 @@ function ForecastView({ rows, labels }) {
     <div className="fade-in">
       <div className="header"><div className="header-top"><span className="header-brand">Money Flow</span></div></div>
 
+      {/* Income & Expense Controls */}
       <div className="section">
         <div className="section-title">Simulation</div>
         <div className="sim-control">
-          <div className="sim-label">月収を変更して未来をシミュレーション</div>
+          <div className="sim-label">月収 (Income)</div>
           <div className="sim-row">
             <button className="sim-btn" onClick={() => setSimIncome(v => Math.max(0, v - 10000))}>-</button>
             <input className="sim-input" type="number" inputMode="numeric"
               value={simIncome} onChange={e => setSimIncome(Number(e.target.value) || 0)} />
             <button className="sim-btn" onClick={() => setSimIncome(v => v + 10000)}>+</button>
           </div>
+
+          <div className="sim-label" style={{ marginTop: 14 }}>月間支出 (Expense)</div>
+          <div className="sim-row">
+            <button className="sim-btn" onClick={() => setSimExpense(v => Math.max(0, v - 10000))}>-</button>
+            <input className="sim-input" type="number" inputMode="numeric"
+              value={simExpense} onChange={e => setSimExpense(Number(e.target.value) || 0)} />
+            <button className="sim-btn" onClick={() => setSimExpense(v => v + 10000)}>+</button>
+          </div>
+
+          {isChanged && (
+            <button className="btn btn-secondary" style={{ marginTop: 12, padding: '8px 12px', fontSize: 12 }}
+              onClick={() => { setSimIncome(defaultIncome); setSimExpense(defaultExpense); }}>
+              リセット
+            </button>
+          )}
+
           <div className="sim-result">
             <div className="sim-stat">
               <div className={`sim-stat-value ${monthlySurplus >= 0 ? 'text-success' : 'text-danger'}`}>{formatYen(monthlySurplus)}</div>
@@ -558,29 +586,67 @@ function ForecastView({ rows, labels }) {
               <div className="sim-stat-label">年間貯蓄</div>
             </div>
             <div className="sim-stat">
-              <div className="sim-stat-value text-warning">{formatYen(avgExpense)}</div>
-              <div className="sim-stat-label">平均支出</div>
-            </div>
-            <div className="sim-stat">
               <div className={`sim-stat-value ${savingsRate >= 0 ? 'text-success' : 'text-danger'}`}>{savingsRate}%</div>
               <div className="sim-stat-label">貯蓄率</div>
+            </div>
+            <div className="sim-stat">
+              <div className="sim-stat-value">{formatYen(projection[11]?.balance || 0)}</div>
+              <div className="sim-stat-label">12ヶ月後残高</div>
             </div>
           </div>
         </div>
       </div>
 
-      {projection.months.length > 0 && (
+      {/* Projection Chart */}
+      {projection.length > 0 && (
         <div className="section">
-          <div className="section-title">12-Month Projection</div>
+          <div className="section-title">Balance Projection</div>
           <div className="chart-card">
             <div className="chart-wrapper">
-              <ProjectionChart months={projection.months} adjusted={projection.adjusted}
-                current={simIncome !== defaultIncome ? projection.current : null} />
+              <ProjectionChart
+                months={projection.map(p => p.label)}
+                adjusted={projection.map(p => p.balance)}
+                current={isChanged ? projection.map(p => p.currentBalance) : null}
+              />
             </div>
           </div>
         </div>
       )}
 
+      {/* Month-by-Month Table */}
+      {projection.length > 0 && (
+        <div className="section">
+          <div className="section-title">Monthly Detail</div>
+          <div className="proj-table-wrap">
+            <table className="proj-table">
+              <thead>
+                <tr>
+                  <th>月</th>
+                  <th>収入</th>
+                  <th>支出</th>
+                  <th>収支</th>
+                  <th>残高</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projection.map((p, i) => (
+                  <tr key={i}>
+                    <td className="proj-month">{p.fullLabel}</td>
+                    <td className="text-success">{formatYen(p.income)}</td>
+                    <td className="text-danger">{formatYen(p.expense)}</td>
+                    <td className={p.surplus >= 0 ? 'text-success' : 'text-danger'}>
+                      {p.surplus >= 0 ? '+' : ''}{formatYen(p.surplus)}
+                    </td>
+                    <td className="proj-balance">{formatYen(p.balance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Surplus History */}
       {rows.length > 1 && (
         <div className="section">
           <div className="section-title">Surplus History</div>
