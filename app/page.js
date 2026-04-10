@@ -41,6 +41,54 @@ function useCustomLabels() {
   return [labels, updateLabel];
 }
 
+// ── Category Order & Visibility Hook ──
+function useCategoryConfig() {
+  const [config, setConfig] = useState({
+    income: [...INCOME_KEYS],
+    expense: [...EXPENSE_KEYS],
+  });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('categoryConfig');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Ensure no stale keys that don't exist anymore
+        setConfig({
+          income: (parsed.income || []).filter(k => INCOME_KEYS.includes(k)),
+          expense: (parsed.expense || []).filter(k => EXPENSE_KEYS.includes(k)),
+        });
+      }
+    } catch {}
+  }, []);
+
+  const save = (next) => {
+    setConfig(next);
+    try { localStorage.setItem('categoryConfig', JSON.stringify(next)); } catch {}
+  };
+
+  const reorder = (type, fromIdx, toIdx) => {
+    const arr = [...config[type]];
+    const [item] = arr.splice(fromIdx, 1);
+    arr.splice(toIdx, 0, item);
+    save({ ...config, [type]: arr });
+  };
+
+  const hide = (type, key) => {
+    save({ ...config, [type]: config[type].filter(k => k !== key) });
+  };
+
+  const show = (type, key) => {
+    save({ ...config, [type]: [...config[type], key] });
+  };
+
+  const reset = () => {
+    save({ income: [...INCOME_KEYS], expense: [...EXPENSE_KEYS] });
+  };
+
+  return [config, { reorder, hide, show, reset }];
+}
+
 // ── Default Category Groups ──
 const DEFAULT_GROUPS = [
   { id: 'housing', name: '住居・光熱', keys: ['rent', 'electric', 'gas', 'water'] },
@@ -110,6 +158,7 @@ export default function Home() {
   const [loaded, setLoaded] = useState(false);
   const [customLabels, updateLabel] = useCustomLabels();
   const [groups, updateGroups, resetGroups] = useGroups();
+  const [catConfig, catActions] = useCategoryConfig();
 
   const loadData = useCallback(async () => {
     try {
@@ -174,7 +223,7 @@ export default function Home() {
 
       {view === 'home' && (
         <HomeView
-          row={row} rows={rows} labels={customLabels} groups={groups}
+          row={row} rows={rows} labels={customLabels} groups={groups} catConfig={catConfig}
           currentIdx={currentIdx} prevMonth={prevMonth} nextMonth={nextMonth}
           onEdit={(item) => setEditModal(item)}
           onSettings={() => setShowSettings(true)}
@@ -186,7 +235,7 @@ export default function Home() {
       )}
       {view === 'input' && (
         <InputView
-          row={row} rows={rows} labels={customLabels}
+          row={row} rows={rows} labels={customLabels} catConfig={catConfig}
           onSave={handleSave} onAdd={handleAdd} saving={saving}
           onSettings={() => setShowSettings(true)}
         />
@@ -201,6 +250,7 @@ export default function Home() {
         <SettingsModal
           labels={customLabels} onUpdate={updateLabel}
           groups={groups} onUpdateGroups={updateGroups} onResetGroups={resetGroups}
+          catConfig={catConfig} catActions={catActions}
           onClose={() => setShowSettings(false)}
         />
       )}
@@ -227,8 +277,10 @@ export default function Home() {
 }
 
 // ── Home View ──
-function HomeView({ row, rows, labels, groups, currentIdx, prevMonth, nextMonth, onEdit, onSettings, onGoInput }) {
+function HomeView({ row, rows, labels, groups, catConfig, currentIdx, prevMonth, nextMonth, onEdit, onSettings, onGoInput }) {
   const [expandedGroups, setExpandedGroups] = useState({});
+  const visibleExpense = new Set(catConfig.expense);
+  const visibleIncome = new Set(catConfig.income);
 
   const toggleGroup = (id) => setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
 
@@ -256,14 +308,15 @@ function HomeView({ row, rows, labels, groups, currentIdx, prevMonth, nextMonth,
   const exp = totalExpense(row);
   const sur = surplus(row);
 
-  // Build grouped data
+  // Build grouped data (only visible keys)
   const groupedKeys = new Set(groups.flatMap(g => g.keys));
-  const ungroupedItems = EXPENSE_KEYS
+  const ungroupedItems = catConfig.expense
     .filter(k => !groupedKeys.has(k) && (row[k] || 0) > 0)
     .map(k => ({ key: k, label: labels[k] || EXPENSE_LABELS[k], amount: row[k] || 0 }));
 
   const groupData = groups.map((g, gi) => {
     const children = g.keys
+      .filter(k => visibleExpense.has(k))
       .map(k => ({ key: k, label: labels[k] || EXPENSE_LABELS[k], amount: row[k] || 0 }))
       .filter(c => c.amount > 0);
     const total = children.reduce((s, c) => s + c.amount, 0);
@@ -321,7 +374,7 @@ function HomeView({ row, rows, labels, groups, currentIdx, prevMonth, nextMonth,
       <div className="section">
         <div className="section-title">Income</div>
         <div className="card">
-          {INCOME_KEYS.map(k => {
+          {catConfig.income.map(k => {
             const v = row[k] || 0;
             if (v === 0) return null;
             return (
@@ -331,7 +384,7 @@ function HomeView({ row, rows, labels, groups, currentIdx, prevMonth, nextMonth,
               </div>
             );
           })}
-          {INCOME_KEYS.every(k => !row[k]) && (
+          {catConfig.income.every(k => !row[k]) && (
             <div style={{ padding: '8px 0', fontSize: 13, color: 'var(--text-muted)' }}>収入データなし</div>
           )}
         </div>
@@ -483,7 +536,7 @@ function HistoryView({ rows, onSelect }) {
 }
 
 // ── Input View ──
-function InputView({ row, rows, labels, onSave, onAdd, saving, onSettings }) {
+function InputView({ row, rows, labels, catConfig, onSave, onAdd, saving, onSettings }) {
   const initial = row || {};
   const [form, setForm] = useState(() => buildForm(initial));
 
@@ -529,7 +582,7 @@ function InputView({ row, rows, labels, onSave, onAdd, saving, onSettings }) {
       <div className="section">
         <div className="section-title">Income</div>
         <div className="form-card">
-          {INCOME_KEYS.map(k => (
+          {catConfig.income.map(k => (
             <div key={k} className="form-group">
               <label className="form-label">{labels[k] || INCOME_LABELS[k]}</label>
               <NumInput value={form[k]} onChange={v => set(k, v)} />
@@ -537,19 +590,9 @@ function InputView({ row, rows, labels, onSave, onAdd, saving, onSettings }) {
           ))}
         </div>
 
-        <div className="section-title">Fixed Expenses</div>
+        <div className="section-title">Expenses</div>
         <div className="form-card">
-          {['rent','loan','insurance','subscription','phone'].map(k => (
-            <div key={k} className="form-group">
-              <label className="form-label">{labels[k] || EXPENSE_LABELS[k]}</label>
-              <NumInput value={form[k]} onChange={v => set(k, v)} />
-            </div>
-          ))}
-        </div>
-
-        <div className="section-title">Variable Expenses</div>
-        <div className="form-card">
-          {['food','electric','gas','water','transport','daily','hobby','beauty','otherExpense','extraExpense'].map(k => (
+          {catConfig.expense.map(k => (
             <div key={k} className="form-group">
               <label className="form-label">{labels[k] || EXPENSE_LABELS[k]}</label>
               <NumInput value={form[k]} onChange={v => set(k, v)} />
@@ -815,39 +858,94 @@ function EditModal({ item, onSave, onClose, saving }) {
 }
 
 // ── Settings Modal ──
-function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups, onClose }) {
-  const [tab, setTab] = useState('labels');
+function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups, catConfig, catActions, onClose }) {
+  const [tab, setTab] = useState('categories');
   const [editingGroup, setEditingGroup] = useState(null);
   const [newGroupName, setNewGroupName] = useState('');
+  const [showAddPicker, setShowAddPicker] = useState(null); // 'income' | 'expense' | null
 
+  // Group helpers
   const addGroup = () => {
     if (!newGroupName.trim()) return;
     const id = 'g_' + Date.now();
     onUpdateGroups([...groups, { id, name: newGroupName.trim(), keys: [] }]);
     setNewGroupName('');
   };
-
-  const renameGroup = (id, name) => {
-    onUpdateGroups(groups.map(g => g.id === id ? { ...g, name } : g));
-  };
-
-  const deleteGroup = (id) => {
-    onUpdateGroups(groups.filter(g => g.id !== id));
-  };
-
+  const renameGroup = (id, name) => onUpdateGroups(groups.map(g => g.id === id ? { ...g, name } : g));
+  const deleteGroup = (id) => onUpdateGroups(groups.filter(g => g.id !== id));
   const toggleKeyInGroup = (groupId, key) => {
     onUpdateGroups(groups.map(g => {
-      if (g.id !== groupId) {
-        return { ...g, keys: g.keys.filter(k => k !== key) };
-      }
-      if (g.keys.includes(key)) {
-        return { ...g, keys: g.keys.filter(k => k !== key) };
-      }
+      if (g.id !== groupId) return { ...g, keys: g.keys.filter(k => k !== key) };
+      if (g.keys.includes(key)) return { ...g, keys: g.keys.filter(k => k !== key) };
       return { ...g, keys: [...g.keys, key] };
     }));
   };
-
   const assignedKeys = new Set(groups.flatMap(g => g.keys));
+
+  // Hidden categories
+  const hiddenIncome = INCOME_KEYS.filter(k => !catConfig.income.includes(k));
+  const hiddenExpense = EXPENSE_KEYS.filter(k => !catConfig.expense.includes(k));
+
+  // Category list renderer
+  const renderCatList = (type, keys, allLabels) => {
+    const items = type === 'income' ? catConfig.income : catConfig.expense;
+    const hidden = type === 'income' ? hiddenIncome : hiddenExpense;
+
+    return (
+      <>
+        {items.map((k, idx) => (
+          <div key={k} className="cat-item">
+            <div className="cat-item-arrows">
+              <button className="cat-arrow" disabled={idx === 0}
+                onClick={() => catActions.reorder(type, idx, idx - 1)}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                </svg>
+              </button>
+              <button className="cat-arrow" disabled={idx === items.length - 1}
+                onClick={() => catActions.reorder(type, idx, idx + 1)}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+            <input className="cat-item-input" value={labels[k] || allLabels[k] || ''}
+              onChange={e => onUpdate(k, e.target.value)} />
+            <button className="cat-item-delete" onClick={() => catActions.hide(type, k)}>
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        ))}
+
+        {hidden.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            {showAddPicker === type ? (
+              <div className="cat-add-picker">
+                {hidden.map(k => (
+                  <button key={k} className="cat-add-chip"
+                    onClick={() => { catActions.show(type, k); if (hidden.length <= 1) setShowAddPicker(null); }}>
+                    + {labels[k] || allLabels[k]}
+                  </button>
+                ))}
+                <button className="cat-add-chip cat-add-chip-cancel" onClick={() => setShowAddPicker(null)}>
+                  キャンセル
+                </button>
+              </div>
+            ) : (
+              <button className="cat-add-btn" onClick={() => setShowAddPicker(type)}>
+                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                カテゴリを追加 ({hidden.length})
+              </button>
+            )}
+          </div>
+        )}
+      </>
+    );
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -858,37 +956,32 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
         </div>
 
         <div className="settings-tabs">
-          <button className={`settings-tab ${tab === 'labels' ? 'active' : ''}`}
-            onClick={() => setTab('labels')}>カテゴリ名</button>
+          <button className={`settings-tab ${tab === 'categories' ? 'active' : ''}`}
+            onClick={() => setTab('categories')}>カテゴリ</button>
           <button className={`settings-tab ${tab === 'groups' ? 'active' : ''}`}
             onClick={() => setTab('groups')}>グループ</button>
         </div>
 
-        {tab === 'labels' && (
+        {tab === 'categories' && (
           <>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
-              名称をタップして変更できます
+              名称変更・並び替え・非表示の管理ができます
             </div>
+
             <div style={{ marginBottom: 16 }}>
               <div className="section-title">Income</div>
-              {INCOME_KEYS.map(k => (
-                <div key={k} className="settings-item">
-                  <span className="settings-label">{INCOME_LABELS[k]}</span>
-                  <input className="settings-input" value={labels[k] || ''}
-                    onChange={e => onUpdate(k, e.target.value)} />
-                </div>
-              ))}
+              {renderCatList('income', catConfig.income, INCOME_LABELS)}
             </div>
-            <div>
+
+            <div style={{ marginBottom: 16 }}>
               <div className="section-title">Expenses</div>
-              {EXPENSE_KEYS.map(k => (
-                <div key={k} className="settings-item">
-                  <span className="settings-label">{EXPENSE_LABELS[k]}</span>
-                  <input className="settings-input" value={labels[k] || ''}
-                    onChange={e => onUpdate(k, e.target.value)} />
-                </div>
-              ))}
+              {renderCatList('expense', catConfig.expense, EXPENSE_LABELS)}
             </div>
+
+            <button className="btn btn-secondary" style={{ fontSize: 12, padding: '10px' }}
+              onClick={() => { catActions.reset(); setShowAddPicker(null); }}>
+              デフォルトに戻す
+            </button>
           </>
         )}
 
