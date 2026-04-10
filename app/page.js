@@ -1,64 +1,49 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { fetchAllData, updateRow, addRow } from '../lib/api';
-import { formatYen, formatMonth, formatShortMonth, totalIncome, totalExpenseWithExtra, monthlySurplus } from '../lib/utils';
-import BalanceChart from '../components/BalanceChart';
+import {
+  formatYen, formatMonth, formatShortMonth, currentMonth, addMonths,
+  totalIncome, totalExpense, surplus,
+  INCOME_KEYS, EXPENSE_KEYS, INCOME_LABELS, EXPENSE_LABELS,
+} from '../lib/utils';
+import { ExpenseDonut, ProjectionChart, SurplusBar, CHART_COLORS } from '../components/Charts';
 
-// デモデータ（GAS未接続時に使用）
-const DEMO_DATA = {
-  categories: [
-    { key: 'food', label: '食費' }, { key: 'rent', label: '家賃' },
-    { key: 'loan', label: '奨学金' }, { key: 'gas', label: 'ガス' },
-    { key: 'kerosene', label: '灯油' }, { key: 'electric', label: '電気' },
-    { key: 'subscription', label: 'サブスク' }, { key: 'transport', label: '移動費' },
-    { key: 'phone', label: '通信費' }, { key: 'daily', label: '日用品' },
-    { key: 'hair', label: '脱毛' }, { key: 'pc', label: 'デスクトップPC' },
-  ],
-  rows: [
-    { rowNum:2, date:'2025-11-25', income:164000, bonus:0, totalExpense:195120, expenses:{food:60000,rent:43270,loan:15000,gas:5000,kerosene:0,electric:3000,subscription:10000,transport:2000,phone:5350,daily:1500,hair:17500,pc:32500}, extraSpend:20000, balanceHokyo:1248880, balanceRakuten:0, notes:'デスクトップPCの支払い' },
-    { rowNum:3, date:'2025-12-25', income:164000, bonus:0, totalExpense:200120, expenses:{food:60000,rent:43270,loan:15000,gas:5000,kerosene:5000,electric:3000,subscription:10000,transport:2000,phone:5350,daily:1500,hair:17500,pc:32500}, extraSpend:20000, balanceHokyo:1192760, balanceRakuten:0, notes:'デスクトップPCの支払い' },
-    { rowNum:4, date:'2026-01-25', income:164000, bonus:300000, totalExpense:200120, expenses:{food:60000,rent:43270,loan:15000,gas:5000,kerosene:5000,electric:3000,subscription:10000,transport:2000,phone:5350,daily:1500,hair:17500,pc:32500}, extraSpend:30000, balanceHokyo:456380, balanceRakuten:600000, notes:'デスクトップPCの支払い' },
-    { rowNum:5, date:'2026-02-25', income:164000, bonus:0, totalExpense:205120, expenses:{food:60000,rent:43270,loan:15000,gas:5000,kerosene:10000,electric:3000,subscription:10000,transport:2000,phone:5350,daily:1500,hair:17500,pc:32500}, extraSpend:30000, balanceHokyo:417760, balanceRakuten:547500, notes:'デスクトップPCの支払い' },
-    { rowNum:6, date:'2026-03-25', income:164000, bonus:0, totalExpense:205120, expenses:{food:60000,rent:43270,loan:15000,gas:5000,kerosene:10000,electric:3000,subscription:10000,transport:2000,phone:5350,daily:1500,hair:17500,pc:32500}, extraSpend:30000, balanceHokyo:379140, balanceRakuten:495000, notes:'デスクトップPCの支払い' },
-    { rowNum:7, date:'2026-04-25', income:164000, bonus:0, totalExpense:195120, expenses:{food:60000,rent:43270,loan:15000,gas:5000,kerosene:0,electric:3000,subscription:10000,transport:2000,phone:5350,daily:1500,hair:17500,pc:32500}, extraSpend:30000, balanceHokyo:350520, balanceRakuten:442500, notes:'デスクトップPCの支払い' },
-    { rowNum:8, date:'2026-05-25', income:210000, bonus:0, totalExpense:195120, expenses:{food:60000,rent:43270,loan:15000,gas:5000,kerosene:0,electric:3000,subscription:10000,transport:2000,phone:5350,daily:1500,hair:17500,pc:32500}, extraSpend:30000, balanceHokyo:367900, balanceRakuten:390000, notes:'デスクトップPCの支払い' },
-    { rowNum:9, date:'2026-06-25', income:210000, bonus:0, totalExpense:162620, expenses:{food:60000,rent:43270,loan:15000,gas:5000,kerosene:0,electric:3000,subscription:10000,transport:2000,phone:5350,daily:1500,hair:17500,pc:0}, extraSpend:30000, balanceHokyo:385280, balanceRakuten:370000, notes:'' },
-    { rowNum:10, date:'2026-07-25', income:210000, bonus:500000, totalExpense:162620, expenses:{food:60000,rent:43270,loan:15000,gas:5000,kerosene:0,electric:3000,subscription:10000,transport:2000,phone:5350,daily:1500,hair:17500,pc:0}, extraSpend:30000, balanceHokyo:902660, balanceRakuten:350000, notes:'' },
-    { rowNum:11, date:'2026-08-25', income:210000, bonus:0, totalExpense:162620, expenses:{food:60000,rent:43270,loan:15000,gas:5000,kerosene:0,electric:3000,subscription:10000,transport:2000,phone:5350,daily:1500,hair:17500,pc:0}, extraSpend:30000, balanceHokyo:920040, balanceRakuten:330000, notes:'' },
-  ]
-};
+// ── Demo Data ──
+const DEMO_ROWS = [
+  { rowNum:2, date:'2025-11', salary:220000, sideIncome:0, otherIncome:0, rent:43270, food:42000, electric:4200, gas:3500, water:3200, phone:5350, subscription:3980, transport:6000, daily:2800, insurance:5000, loan:15000, hobby:5000, beauty:0, otherExpense:2000, extraExpense:0, balanceHokyo:385000, balanceRakuten:290000, notes:'' },
+  { rowNum:3, date:'2025-12', salary:220000, sideIncome:0, otherIncome:50000, rent:43270, food:52000, electric:5800, gas:5200, water:3200, phone:5350, subscription:3980, transport:8000, daily:4500, insurance:5000, loan:15000, hobby:15000, beauty:5000, otherExpense:5000, extraExpense:30000, balanceHokyo:370000, balanceRakuten:265000, notes:'' },
+  { rowNum:4, date:'2026-01', salary:220000, sideIncome:0, otherIncome:0, rent:43270, food:45000, electric:7200, gas:6500, water:3200, phone:5350, subscription:3980, transport:5000, daily:3000, insurance:5000, loan:15000, hobby:4000, beauty:0, otherExpense:2000, extraExpense:0, balanceHokyo:356500, balanceRakuten:260000, notes:'' },
+  { rowNum:5, date:'2026-02', salary:220000, sideIncome:0, otherIncome:0, rent:43270, food:44000, electric:7800, gas:7000, water:3200, phone:5350, subscription:3980, transport:5500, daily:2500, insurance:5000, loan:15000, hobby:3000, beauty:5000, otherExpense:1500, extraExpense:0, balanceHokyo:340900, balanceRakuten:257000, notes:'' },
+  { rowNum:6, date:'2026-03', salary:220000, sideIncome:15000, otherIncome:0, rent:43270, food:46000, electric:5500, gas:4500, water:3200, phone:5350, subscription:3980, transport:7000, daily:3200, insurance:5000, loan:15000, hobby:8000, beauty:0, otherExpense:3000, extraExpense:15000, balanceHokyo:328400, balanceRakuten:255000, notes:'' },
+  { rowNum:7, date:'2026-04', salary:220000, sideIncome:0, otherIncome:0, rent:43270, food:48000, electric:4500, gas:3800, water:3200, phone:5350, subscription:3980, transport:6500, daily:2800, insurance:5000, loan:15000, hobby:6000, beauty:5000, otherExpense:2000, extraExpense:0, balanceHokyo:322000, balanceRakuten:252000, notes:'' },
+];
 
+// ── Main App ──
 export default function Home() {
-  const [data, setData] = useState(null);
+  const [rows, setRows] = useState([]);
   const [currentIdx, setCurrentIdx] = useState(0);
-  const [view, setView] = useState('home'); // home | list | input | forecast
+  const [view, setView] = useState('home');
   const [editModal, setEditModal] = useState(null);
   const [toast, setToast] = useState('');
   const [saving, setSaving] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
       const result = await fetchAllData();
       if (result.error) throw new Error(result.error);
-      setData(result);
-      // 今月に最も近い行を選択
-      const now = new Date();
-      let closest = 0;
-      let minDiff = Infinity;
-      result.rows.forEach((r, i) => {
-        const d = new Date(r.date);
-        const diff = Math.abs(d - now);
-        if (diff < minDiff) { minDiff = diff; closest = i; }
-      });
-      setCurrentIdx(closest);
-    } catch (e) {
-      console.warn('GAS未接続のためデモデータを使用:', e.message);
-      setData(DEMO_DATA);
+      setRows(result.rows || []);
+      const cm = currentMonth();
+      const idx = (result.rows || []).findIndex(r => r.date === cm);
+      setCurrentIdx(idx >= 0 ? idx : Math.max(0, (result.rows || []).length - 1));
+    } catch {
+      setRows(DEMO_ROWS);
       setIsDemo(true);
-      setCurrentIdx(5); // 2026年4月
+      setCurrentIdx(DEMO_ROWS.length - 1);
     }
+    setLoaded(true);
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
@@ -68,28 +53,11 @@ export default function Home() {
     setTimeout(() => setToast(''), 2500);
   };
 
-  if (!data) return <div className="loading"><div className="spinner" />読み込み中...</div>;
-
-  const row = data.rows[currentIdx];
-  const categories = data.categories;
-  const surplus = monthlySurplus(row);
-  const incomeTotal = totalIncome(row);
-  const expenseTotal = totalExpenseWithExtra(row);
-
-  const prevMonth = () => setCurrentIdx(i => Math.max(0, i - 1));
-  const nextMonth = () => setCurrentIdx(i => Math.min(data.rows.length - 1, i + 1));
-
   const handleSave = async (rowNum, updates) => {
     setSaving(true);
     try {
       if (isDemo) {
-        // デモモード：ローカル更新
-        setData(prev => {
-          const newRows = [...prev.rows];
-          const idx = newRows.findIndex(r => r.rowNum === rowNum);
-          if (idx >= 0) newRows[idx] = { ...newRows[idx], ...updates };
-          return { ...prev, rows: newRows };
-        });
+        setRows(prev => prev.map(r => r.rowNum === rowNum ? { ...r, ...updates } : r));
       } else {
         await updateRow({ rowNum, ...updates });
         await loadData();
@@ -102,48 +70,65 @@ export default function Home() {
     setSaving(false);
   };
 
+  const handleAdd = async (newData) => {
+    setSaving(true);
+    try {
+      if (isDemo) {
+        setRows(prev => [...prev, { rowNum: prev.length + 2, ...newData }]);
+        setCurrentIdx(rows.length);
+      } else {
+        await addRow(newData);
+        await loadData();
+      }
+      showToast('追加しました');
+      setView('home');
+    } catch (e) {
+      showToast('エラー: ' + e.message);
+    }
+    setSaving(false);
+  };
+
+  if (!loaded) {
+    return (
+      <div className="loading">
+        <div className="spinner" />
+        <span className="loading-text">Loading...</span>
+      </div>
+    );
+  }
+
+  const row = rows[currentIdx];
+  const prevMonth = () => setCurrentIdx(i => Math.max(0, i - 1));
+  const nextMonth = () => setCurrentIdx(i => Math.min(rows.length - 1, i + 1));
+
   return (
     <div className="app">
-      {isDemo && (
-        <div style={{ background: 'var(--amber-light)', borderBottom: '1px solid var(--border)', padding: '8px 20px', fontSize: 12, color: 'var(--amber)' }}>
-          デモモード — GAS URLを設定すると実データに接続されます
-        </div>
-      )}
+      {isDemo && <div className="demo-banner">DEMO MODE</div>}
 
-      {view === 'home' && (
+      {view === 'home' && row && (
         <HomeView
-          row={row} categories={categories} surplus={surplus}
-          incomeTotal={incomeTotal} expenseTotal={expenseTotal}
-          currentIdx={currentIdx} total={data.rows.length}
-          prevMonth={prevMonth} nextMonth={nextMonth}
+          row={row} rows={rows}
+          currentIdx={currentIdx} prevMonth={prevMonth} nextMonth={nextMonth}
           onEdit={(item) => setEditModal(item)}
         />
       )}
-
-      {view === 'list' && (
-        <ListView
-          rows={data.rows} categories={categories}
-          onSelect={(idx) => { setCurrentIdx(idx); setView('home'); }}
-        />
+      {view === 'history' && (
+        <HistoryView rows={rows} onSelect={(idx) => { setCurrentIdx(idx); setView('home'); }} />
       )}
-
       {view === 'input' && (
         <InputView
-          row={row} categories={categories}
-          onSave={handleSave} saving={saving}
-          formatMonth={formatMonth}
+          row={row} rows={rows}
+          onSave={handleSave} onAdd={handleAdd} saving={saving}
         />
       )}
-
       {view === 'forecast' && (
-        <ForecastView rows={data.rows} />
+        <ForecastView rows={rows} />
       )}
 
       {editModal && (
         <EditModal
-          item={editModal} row={row}
-          onSave={handleSave} onClose={() => setEditModal(null)}
-          saving={saving}
+          item={editModal} onSave={handleSave}
+          onClose={() => setEditModal(null)} saving={saving}
         />
       )}
 
@@ -151,20 +136,16 @@ export default function Home() {
 
       <nav className="bottom-nav">
         {[
-          { id: 'home', label: 'ホーム', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0h4' },
-          { id: 'list', label: '一覧', icon: 'M4 6h16M4 12h16M4 18h16' },
-          { id: 'input', label: '入力', icon: 'M12 4v16m8-8H4' },
-          { id: 'forecast', label: '予測', icon: 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
-        ].map(nav => (
-          <button
-            key={nav.id}
-            className={`nav-item ${view === nav.id ? 'active' : ''}`}
-            onClick={() => setView(nav.id)}
-          >
+          { id:'home', label:'ホーム', d:'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0h4' },
+          { id:'history', label:'一覧', d:'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' },
+          { id:'input', label:'入力', d:'M12 4v16m8-8H4' },
+          { id:'forecast', label:'予測', d:'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
+        ].map(n => (
+          <button key={n.id} className={`nav-item ${view === n.id ? 'active' : ''}`} onClick={() => setView(n.id)}>
             <svg className="nav-icon" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d={nav.icon} />
+              <path strokeLinecap="round" strokeLinejoin="round" d={n.d} />
             </svg>
-            {nav.label}
+            {n.label}
           </button>
         ))}
       </nav>
@@ -172,77 +153,114 @@ export default function Home() {
   );
 }
 
-// ── ホーム画面 ──
-function HomeView({ row, categories, surplus, incomeTotal, expenseTotal, currentIdx, total, prevMonth, nextMonth, onEdit }) {
-  const sorted = [...categories]
-    .map(c => ({ ...c, amount: row.expenses[c.key] || 0 }))
-    .filter(c => c.amount > 0)
+// ── Home View ──
+function HomeView({ row, rows, currentIdx, prevMonth, nextMonth, onEdit }) {
+  const inc = totalIncome(row);
+  const exp = totalExpense(row);
+  const sur = surplus(row);
+  const maxExp = Math.max(...EXPENSE_KEYS.map(k => row[k] || 0), 1);
+
+  const expenseItems = EXPENSE_KEYS
+    .map(k => ({ key: k, label: EXPENSE_LABELS[k], amount: row[k] || 0 }))
+    .filter(e => e.amount > 0)
     .sort((a, b) => b.amount - a.amount);
 
+  const donutData = expenseItems.map(e => e.amount);
+  const donutLabels = expenseItems.map(e => e.label);
+
   return (
-    <>
+    <div className="fade-in">
       <div className="header">
-        <div className="header-month">{formatMonth(row.date)}</div>
-        <div className={`header-amount ${surplus >= 0 ? 'positive' : 'negative'}`}>
-          {surplus >= 0 ? '+' : ''}{formatYen(surplus)}
-        </div>
-        <div className="header-detail">
-          収入 {formatYen(incomeTotal)} ／ 支出 {formatYen(expenseTotal)}
-        </div>
-        <div className="month-nav">
-          <button onClick={prevMonth} disabled={currentIdx === 0}>← 前月</button>
-          <span className="current">{formatMonth(row.date)}</span>
-          <button onClick={nextMonth} disabled={currentIdx === total - 1}>翌月 →</button>
-        </div>
-      </div>
-
-      <div className="bank-cards">
-        <div className="bank-card">
-          <div className="label">北洋銀行</div>
-          <div className="amount">{formatYen(row.balanceHokyo)}</div>
-        </div>
-        <div className="bank-card">
-          <div className="label">楽天銀行</div>
-          <div className="amount">{formatYen(row.balanceRakuten)}</div>
-        </div>
-      </div>
-
-      {(row.income > 0 || row.bonus > 0) && (
-        <div className="section">
-          <div className="section-title">収入</div>
-          <div className="income-row">
-            <span className="label">通常収入</span>
-            <span className="amount income-color">{formatYen(row.income)}</span>
+        <div className="header-top">
+          <span className="header-brand">Money Flow</span>
+          <div className="month-nav">
+            <button onClick={prevMonth} disabled={currentIdx === 0}>&lt;</button>
+            <span className="current-month">{formatMonth(row.date)}</span>
+            <button onClick={nextMonth} disabled={currentIdx === rows.length - 1}>&gt;</button>
           </div>
-          {row.bonus > 0 && (
-            <div className="income-row">
-              <span className="label">ボーナス</span>
-              <span className="amount income-color">{formatYen(row.bonus)}</span>
+        </div>
+      </div>
+
+      <div className="hero">
+        <div className="hero-label">MONTHLY BALANCE</div>
+        <div className={`hero-amount ${sur >= 0 ? 'positive' : 'negative'}`}>
+          {sur >= 0 ? '+' : ''}{formatYen(sur)}
+        </div>
+        <div className="hero-detail">
+          <span><span className="dot dot-income" /> {formatYen(inc)}</span>
+          <span><span className="dot dot-expense" /> {formatYen(exp)}</span>
+        </div>
+      </div>
+
+      <div className="card-grid">
+        <div className="card">
+          <div className="card-label">北洋銀行</div>
+          <div className="card-amount">{formatYen(row.balanceHokyo)}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">楽天銀行</div>
+          <div className="card-amount">{formatYen(row.balanceRakuten)}</div>
+        </div>
+      </div>
+
+      {/* Income Section */}
+      <div className="section">
+        <div className="section-title">Income</div>
+        <div className="card">
+          {INCOME_KEYS.map(k => {
+            const v = row[k] || 0;
+            if (v === 0) return null;
+            return (
+              <div key={k} className="stat-row">
+                <span className="stat-label">{INCOME_LABELS[k]}</span>
+                <span className="stat-value income">{formatYen(v)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Expense Donut */}
+      {expenseItems.length > 0 && (
+        <div className="section">
+          <div className="section-title">Expenses</div>
+          <div className="chart-card">
+            <div className="donut-wrapper">
+              <ExpenseDonut data={donutData} labels={donutLabels} />
+              <div className="donut-center">
+                <div className="donut-center-amount">{formatYen(exp)}</div>
+                <div className="donut-center-label">TOTAL</div>
+              </div>
             </div>
-          )}
-          {row.extraSpend > 0 && (
-            <div className="income-row">
-              <span className="label">プラス支出</span>
-              <span className="amount" style={{ color: 'var(--amber)' }}>{formatYen(row.extraSpend)}</span>
+            <div className="legend">
+              {expenseItems.map((e, i) => (
+                <span key={e.key} className="legend-item">
+                  <span className="legend-dot" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
+                  {e.label}
+                </span>
+              ))}
             </div>
-          )}
+          </div>
         </div>
       )}
 
+      {/* Expense Bars */}
       <div className="section">
-        <div className="section-title">支出内訳（{formatYen(row.totalExpense)}）</div>
-        <div className="expense-list">
-          {sorted.map(item => (
+        <div className="section-title">Breakdown</div>
+        <div className="expense-bars">
+          {expenseItems.map(e => (
             <div
-              key={item.key}
-              className="expense-item"
-              onClick={() => onEdit({ type: 'expense', key: item.key, label: item.label, value: item.amount, rowNum: row.rowNum })}
+              key={e.key}
+              className="expense-bar-item"
+              onClick={() => onEdit({ key: e.key, label: e.label, value: e.amount, rowNum: row.rowNum })}
             >
-              <span className="label">
-                <span className="bar" />
-                {item.label}
-              </span>
-              <span className="amount">{formatYen(item.amount)}</span>
+              <div className="expense-bar-item-top">
+                <span className="label">{e.label}</span>
+                <span className="amount">{formatYen(e.amount)}</span>
+              </div>
+              <div className="expense-bar-track">
+                <div className="expense-bar-fill" style={{ width: `${(e.amount / maxExp) * 100}%` }} />
+              </div>
             </div>
           ))}
         </div>
@@ -250,198 +268,315 @@ function HomeView({ row, categories, surplus, incomeTotal, expenseTotal, current
 
       {row.notes && (
         <div className="section">
-          <div className="section-title">備考</div>
-          <p style={{ fontSize: 14, color: 'var(--text-sub)' }}>{row.notes}</p>
+          <div className="section-title">Notes</div>
+          <div className="card" style={{ padding: 14, fontSize: 13, color: 'var(--text-secondary)' }}>
+            {row.notes}
+          </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
-// ── 一覧画面 ──
-function ListView({ rows, onSelect }) {
+// ── History View ──
+function HistoryView({ rows, onSelect }) {
   return (
-    <>
+    <div className="fade-in">
       <div className="header">
-        <div style={{ fontSize: 16, fontWeight: 600 }}>月別一覧</div>
-      </div>
-      <div className="section">
-        <div className="expense-list">
-          {rows.map((row, idx) => {
-            const s = monthlySurplus(row);
-            return (
-              <div key={row.rowNum} className="expense-item" onClick={() => onSelect(idx)}>
-                <span className="label">{formatMonth(row.date)}</span>
-                <span className="amount" style={{ color: s >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                  {s >= 0 ? '+' : ''}{formatYen(s)}
-                </span>
-              </div>
-            );
-          })}
+        <div className="header-top">
+          <span className="header-brand">Money Flow</span>
         </div>
       </div>
-    </>
+
+      <div className="section">
+        <div className="section-title">Monthly History</div>
+        {[...rows].reverse().map((row, _i) => {
+          const idx = rows.length - 1 - _i;
+          const sur = surplus(row);
+          const inc = totalIncome(row);
+          const exp = totalExpense(row);
+          return (
+            <div key={row.rowNum} className="history-item" onClick={() => onSelect(idx)}>
+              <div>
+                <div className="history-month">{formatMonth(row.date)}</div>
+                <div className="history-sub">
+                  {formatYen(inc)} / {formatYen(exp)}
+                </div>
+              </div>
+              <div className={`history-surplus ${sur >= 0 ? 'text-success' : 'text-danger'}`}>
+                {sur >= 0 ? '+' : ''}{formatYen(sur)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
-// ── 入力画面 ──
-function InputView({ row, categories, onSave, saving, formatMonth }) {
-  const [form, setForm] = useState({
-    income: row.income,
-    bonus: row.bonus,
-    extraSpend: row.extraSpend,
-    notes: row.notes,
-    balanceHokyo: row.balanceHokyo,
-    balanceRakuten: row.balanceRakuten,
-    expenses: { ...row.expenses },
-  });
+// ── Input View ──
+function InputView({ row, rows, onSave, onAdd, saving }) {
+  const isNew = !row;
+  const initial = row || { date: addMonths(currentMonth(), 0) };
+
+  const [form, setForm] = useState(() => ({
+    date: initial.date || currentMonth(),
+    ...Object.fromEntries(INCOME_KEYS.map(k => [k, initial[k] || 0])),
+    ...Object.fromEntries(EXPENSE_KEYS.map(k => [k, initial[k] || 0])),
+    balanceHokyo: initial.balanceHokyo || 0,
+    balanceRakuten: initial.balanceRakuten || 0,
+    notes: initial.notes || '',
+  }));
 
   useEffect(() => {
+    if (!row) return;
     setForm({
-      income: row.income, bonus: row.bonus,
-      extraSpend: row.extraSpend, notes: row.notes,
-      balanceHokyo: row.balanceHokyo, balanceRakuten: row.balanceRakuten,
-      expenses: { ...row.expenses },
+      date: row.date || currentMonth(),
+      ...Object.fromEntries(INCOME_KEYS.map(k => [k, row[k] || 0])),
+      ...Object.fromEntries(EXPENSE_KEYS.map(k => [k, row[k] || 0])),
+      balanceHokyo: row.balanceHokyo || 0,
+      balanceRakuten: row.balanceRakuten || 0,
+      notes: row.notes || '',
     });
   }, [row]);
 
-  const updateField = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
-  const updateExpense = (key, value) => setForm(prev => ({
-    ...prev,
-    expenses: { ...prev.expenses, [key]: value }
-  }));
+  const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const handleSubmit = () => {
+    if (isNew || !rows.find(r => r.date === form.date)) {
+      onAdd(form);
+    } else {
+      const { date, ...updates } = form;
+      onSave(row.rowNum, updates);
+    }
+  };
 
   return (
-    <>
+    <div className="fade-in">
       <div className="header">
-        <div style={{ fontSize: 16, fontWeight: 600 }}>{formatMonth(row.date)} の編集</div>
+        <div className="header-top">
+          <span className="header-brand">Money Flow</span>
+        </div>
+        <div style={{ marginTop: 4, fontSize: 15, fontWeight: 600 }}>
+          {formatMonth(form.date)}
+        </div>
       </div>
 
       <div className="section">
-        <div className="form-section">
-          <div className="section-title">収入</div>
-          <div className="form-group">
-            <label className="form-label">通常収入</label>
-            <input className="form-input" type="number" value={form.income}
-              onChange={e => updateField('income', Number(e.target.value))} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">ボーナス</label>
-            <input className="form-input" type="number" value={form.bonus}
-              onChange={e => updateField('bonus', Number(e.target.value))} />
-          </div>
-        </div>
-
-        <div className="form-section">
-          <div className="section-title">支出</div>
-          {categories.map(cat => (
-            <div key={cat.key} className="form-group">
-              <label className="form-label">{cat.label}</label>
-              <input className="form-input" type="number"
-                value={form.expenses[cat.key] || 0}
-                onChange={e => updateExpense(cat.key, Number(e.target.value))} />
+        <div className="section-title">Income</div>
+        <div className="form-card">
+          {INCOME_KEYS.map(k => (
+            <div key={k} className="form-group">
+              <label className="form-label">{INCOME_LABELS[k]}</label>
+              <input className="form-input" type="number" inputMode="numeric"
+                value={form[k]} onChange={e => set(k, Number(e.target.value))} />
             </div>
           ))}
         </div>
 
-        <div className="form-section">
-          <div className="section-title">その他</div>
+        <div className="section-title">Fixed Expenses</div>
+        <div className="form-card">
+          {['rent','loan','insurance','subscription','phone'].map(k => (
+            <div key={k} className="form-group">
+              <label className="form-label">{EXPENSE_LABELS[k]}</label>
+              <input className="form-input" type="number" inputMode="numeric"
+                value={form[k]} onChange={e => set(k, Number(e.target.value))} />
+            </div>
+          ))}
+        </div>
+
+        <div className="section-title">Variable Expenses</div>
+        <div className="form-card">
+          {['food','electric','gas','water','transport','daily','hobby','beauty','otherExpense','extraExpense'].map(k => (
+            <div key={k} className="form-group">
+              <label className="form-label">{EXPENSE_LABELS[k]}</label>
+              <input className="form-input" type="number" inputMode="numeric"
+                value={form[k]} onChange={e => set(k, Number(e.target.value))} />
+            </div>
+          ))}
+        </div>
+
+        <div className="section-title">Balance & Notes</div>
+        <div className="form-card">
           <div className="form-group">
-            <label className="form-label">プラス支出</label>
-            <input className="form-input" type="number" value={form.extraSpend}
-              onChange={e => updateField('extraSpend', Number(e.target.value))} />
+            <label className="form-label">北洋銀行</label>
+            <input className="form-input" type="number" inputMode="numeric"
+              value={form.balanceHokyo} onChange={e => set('balanceHokyo', Number(e.target.value))} />
           </div>
           <div className="form-group">
-            <label className="form-label">北洋銀行 残高</label>
-            <input className="form-input" type="number" value={form.balanceHokyo}
-              onChange={e => updateField('balanceHokyo', Number(e.target.value))} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">楽天銀行 残高</label>
-            <input className="form-input" type="number" value={form.balanceRakuten}
-              onChange={e => updateField('balanceRakuten', Number(e.target.value))} />
+            <label className="form-label">楽天銀行</label>
+            <input className="form-input" type="number" inputMode="numeric"
+              value={form.balanceRakuten} onChange={e => set('balanceRakuten', Number(e.target.value))} />
           </div>
           <div className="form-group">
             <label className="form-label">備考</label>
-            <textarea className="form-input form-textarea" value={form.notes}
-              onChange={e => updateField('notes', e.target.value)} />
+            <textarea className="form-input form-textarea"
+              value={form.notes} onChange={e => set('notes', e.target.value)} />
           </div>
         </div>
 
-        <button className="btn btn-primary" disabled={saving}
-          onClick={() => onSave(row.rowNum, form)}>
+        <button className="btn btn-primary" disabled={saving} onClick={handleSubmit}>
           {saving ? '保存中...' : '保存する'}
         </button>
       </div>
-    </>
+    </div>
   );
 }
 
-// ── 予測画面 ──
+// ── Forecast View (Simulation) ──
 function ForecastView({ rows }) {
+  const recent = rows.slice(-3);
+  const defaultIncome = recent.length > 0
+    ? Math.round(recent.reduce((s, r) => s + totalIncome(r), 0) / recent.length)
+    : 200000;
+
+  const [simIncome, setSimIncome] = useState(defaultIncome);
+
+  const avgExpense = useMemo(() => {
+    if (recent.length === 0) return 0;
+    return Math.round(recent.reduce((s, r) => s + totalExpense(r), 0) / recent.length);
+  }, [rows]);
+
+  const projection = useMemo(() => {
+    if (rows.length === 0) return { months: [], adjusted: [], current: [] };
+
+    const latest = rows[rows.length - 1];
+    const baseBalance = (latest.balanceHokyo || 0) + (latest.balanceRakuten || 0);
+    const currentIncome = defaultIncome;
+    const months = [];
+    const adjusted = [];
+    const current = [];
+
+    let adjBal = baseBalance;
+    let curBal = baseBalance;
+
+    for (let i = 1; i <= 12; i++) {
+      const m = addMonths(latest.date, i);
+      months.push(formatShortMonth(m));
+
+      adjBal += simIncome - avgExpense;
+      adjusted.push(adjBal);
+
+      curBal += currentIncome - avgExpense;
+      current.push(curBal);
+    }
+
+    return { months, adjusted, current };
+  }, [rows, simIncome, avgExpense, defaultIncome]);
+
+  const monthlySurplus = simIncome - avgExpense;
+  const yearSavings = monthlySurplus * 12;
+  const savingsRate = simIncome > 0 ? Math.round((monthlySurplus / simIncome) * 100) : 0;
+
+  // Surplus history bar chart
+  const histLabels = rows.map(r => formatShortMonth(r.date));
+  const histData = rows.map(r => surplus(r));
+
   return (
-    <>
+    <div className="fade-in">
       <div className="header">
-        <div style={{ fontSize: 16, fontWeight: 600 }}>残高推移予測</div>
-        <div style={{ fontSize: 12, color: 'var(--text-hint)', marginTop: 4 }}>
-          {formatMonth(rows[0]?.date)} 〜 {formatMonth(rows[rows.length - 1]?.date)}
+        <div className="header-top">
+          <span className="header-brand">Money Flow</span>
         </div>
       </div>
 
+      {/* Simulation Controls */}
       <div className="section">
-        <div className="chart-container">
-          <div className="section-title">銀行残高</div>
-          <div className="chart-wrapper">
-            <BalanceChart rows={rows} type="balance" />
+        <div className="section-title">Simulation</div>
+        <div className="sim-control">
+          <div className="sim-label">月収を変更して未来をシミュレーション</div>
+          <div className="sim-row">
+            <button className="sim-btn" onClick={() => setSimIncome(v => Math.max(0, v - 10000))}>-</button>
+            <input
+              className="sim-input"
+              type="number"
+              inputMode="numeric"
+              value={simIncome}
+              onChange={e => setSimIncome(Number(e.target.value))}
+            />
+            <button className="sim-btn" onClick={() => setSimIncome(v => v + 10000)}>+</button>
           </div>
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="chart-container">
-          <div className="section-title">月次収支</div>
-          <div className="chart-wrapper">
-            <BalanceChart rows={rows} type="surplus" />
-          </div>
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="section-title">ポイント</div>
-        <div className="expense-list">
-          {rows.filter(r => r.bonus > 0).map(r => (
-            <div key={r.rowNum} className="expense-item">
-              <span className="label">{formatMonth(r.date)}</span>
-              <span className="amount income-color">ボーナス {formatYen(r.bonus)}</span>
+          <div className="sim-result">
+            <div className="sim-stat">
+              <div className={`sim-stat-value ${monthlySurplus >= 0 ? 'text-success' : 'text-danger'}`}>
+                {formatYen(monthlySurplus)}
+              </div>
+              <div className="sim-stat-label">月間収支</div>
             </div>
-          ))}
+            <div className="sim-stat">
+              <div className={`sim-stat-value ${yearSavings >= 0 ? 'text-success' : 'text-danger'}`}>
+                {formatYen(yearSavings)}
+              </div>
+              <div className="sim-stat-label">年間貯蓄</div>
+            </div>
+            <div className="sim-stat">
+              <div className="sim-stat-value text-warning">{formatYen(avgExpense)}</div>
+              <div className="sim-stat-label">平均支出</div>
+            </div>
+            <div className="sim-stat">
+              <div className={`sim-stat-value ${savingsRate >= 0 ? 'text-success' : 'text-danger'}`}>
+                {savingsRate}%
+              </div>
+              <div className="sim-stat-label">貯蓄率</div>
+            </div>
+          </div>
         </div>
       </div>
-    </>
+
+      {/* Projection Chart */}
+      {projection.months.length > 0 && (
+        <div className="section">
+          <div className="section-title">12-Month Projection</div>
+          <div className="chart-card">
+            <div className="chart-wrapper">
+              <ProjectionChart
+                months={projection.months}
+                adjusted={projection.adjusted}
+                current={simIncome !== defaultIncome ? projection.current : null}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Surplus History */}
+      {rows.length > 1 && (
+        <div className="section">
+          <div className="section-title">Monthly Surplus History</div>
+          <div className="chart-card">
+            <div className="chart-wrapper">
+              <SurplusBar labels={histLabels} data={histData} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
-// ── 編集モーダル ──
-function EditModal({ item, row, onSave, onClose, saving }) {
+// ── Edit Modal ──
+function EditModal({ item, onSave, onClose, saving }) {
   const [value, setValue] = useState(item.value);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <div className="modal-title">{item.label}を編集</div>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <div className="modal-title">{item.label}</div>
+          <button className="modal-close" onClick={onClose}>x</button>
         </div>
         <div className="form-group">
           <label className="form-label">金額</label>
-          <input className="form-input" type="number" value={value} autoFocus
-            onChange={e => setValue(Number(e.target.value))} />
+          <input className="form-input" type="number" inputMode="numeric"
+            value={value} autoFocus onChange={e => setValue(Number(e.target.value))} />
         </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-          <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>キャンセル</button>
+        <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+          <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>
+            キャンセル
+          </button>
           <button className="btn btn-primary" style={{ flex: 1 }} disabled={saving}
-            onClick={() => onSave(row.rowNum, { expenses: { [item.key]: value } })}>
-            {saving ? '保存中...' : '保存'}
+            onClick={() => onSave(item.rowNum, { [item.key]: value })}>
+            {saving ? '...' : '保存'}
           </button>
         </div>
       </div>

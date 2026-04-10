@@ -1,12 +1,18 @@
 import './globals.css';
 
 export const metadata = {
-  title: '収支管理',
-  description: '月次収支管理アプリ',
-  viewport: 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover',
+  title: 'Money Flow',
+  description: '収支管理・シミュレーション',
   manifest: '/manifest.json',
-  themeColor: '#ffffff',
-  appleWebApp: { capable: true, statusBarStyle: 'default', title: '収支管理' },
+  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'MoneyFlow' },
+};
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#050816',
 };
 
 export default function RootLayout({ children }) {

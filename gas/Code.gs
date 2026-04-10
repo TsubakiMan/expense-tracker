@@ -1,244 +1,174 @@
 /**
- * もん助 支出管理アプリ — GAS API バックエンド
- * 
- * このスクリプトをGoogle Apps Scriptエディタに貼り付けて、
- * Webアプリとしてデプロイしてください。
- * 
- * スプレッドシートのID は SPREADSHEET_ID に設定してください。
+ * 支出管理アプリ — GAS API バックエンド v2
+ *
+ * スプレッドシート列: A-V (22列)
+ * A:年月  B:給与  C:副収入  D:その他収入
+ * E:家賃  F:食費  G:電気  H:ガス  I:水道
+ * J:通信費  K:サブスク  L:交通費  M:日用品
+ * N:保険  O:ローン  P:趣味娯楽  Q:美容
+ * R:その他支出  S:臨時支出
+ * T:北洋銀行  U:楽天銀行  V:備考
  */
 
 const SPREADSHEET_ID = 'YOUR_SPREADSHEET_ID_HERE';
 const SHEET_NAME = 'シート1';
 
-// ── CORS対応 ──
-function doOptions(e) {
-  return ContentService.createTextOutput('')
-    .setMimeType(ContentService.MimeType.TEXT)
-    .setContent('');
-}
+const COL = {
+  date:1, salary:2, sideIncome:3, otherIncome:4,
+  rent:5, food:6, electric:7, gas:8, water:9,
+  phone:10, subscription:11, transport:12, daily:13,
+  insurance:14, loan:15, hobby:16, beauty:17,
+  otherExpense:18, extraExpense:19,
+  balanceHokyo:20, balanceRakuten:21, notes:22
+};
 
-// ── GET: データ取得 ──
+const CATEGORIES = [
+  { key:'rent',         label:'家賃',     col:5  },
+  { key:'food',         label:'食費',     col:6  },
+  { key:'electric',     label:'電気',     col:7  },
+  { key:'gas',          label:'ガス',     col:8  },
+  { key:'water',        label:'水道',     col:9  },
+  { key:'phone',        label:'通信費',   col:10 },
+  { key:'subscription', label:'サブスク', col:11 },
+  { key:'transport',    label:'交通費',   col:12 },
+  { key:'daily',        label:'日用品',   col:13 },
+  { key:'insurance',    label:'保険',     col:14 },
+  { key:'loan',         label:'ローン',   col:15 },
+  { key:'hobby',        label:'趣味・娯楽', col:16 },
+  { key:'beauty',       label:'美容',     col:17 },
+  { key:'otherExpense', label:'その他',   col:18 },
+  { key:'extraExpense', label:'臨時支出', col:19 },
+];
+
+// ── HTTP handlers ──
+
 function doGet(e) {
   try {
-    const action = e.parameter.action || 'getAll';
-
+    const action = (e && e.parameter && e.parameter.action) || 'getAll';
     let result;
     switch (action) {
-      case 'getAll':
-        result = getAllData();
-        break;
-      case 'getMonth':
-        result = getMonthData(e.parameter.date);
-        break;
-      case 'getCategories':
-        result = getCategories();
-        break;
-      default:
-        result = { error: 'Unknown action: ' + action };
+      case 'getAll':        result = getAllData(); break;
+      case 'getCategories': result = { categories: CATEGORIES }; break;
+      default:              result = { error: 'Unknown action' };
     }
-
     return jsonResponse(result);
   } catch (err) {
     return jsonResponse({ error: err.message });
   }
 }
 
-// ── POST: データ更新 ──
 function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
-    const action = body.action || 'updateRow';
-
     let result;
-    switch (action) {
-      case 'updateRow':
-        result = updateRow(body);
-        break;
-      case 'addRow':
-        result = addRow(body);
-        break;
-      case 'deleteRow':
-        result = deleteRow(body);
-        break;
-      default:
-        result = { error: 'Unknown action: ' + action };
+    switch (body.action) {
+      case 'updateRow': result = updateRow(body); break;
+      case 'addRow':    result = addRow(body); break;
+      case 'deleteRow': result = deleteRow(body); break;
+      default:          result = { error: 'Unknown action' };
     }
-
     return jsonResponse(result);
   } catch (err) {
     return jsonResponse({ error: err.message });
   }
 }
 
-// ── ヘルパー ──
 function jsonResponse(data) {
   return ContentService
     .createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// ── Helpers ──
+
 function getSheet() {
   return SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME);
 }
 
-// ── カテゴリ定義 ──
-// スプレッドシートの列とカテゴリのマッピング
-const COLUMN_MAP = {
-  date: 1,           // A: 日付
-  income: 2,         // B: 収入(通常)
-  bonus: 3,          // C: 収入(ボーナス)
-  totalExpense: 4,   // D: 予定：支出
-  // E列はスキップ
-  food: 6,           // F: 食費
-  rent: 7,           // G: 家賃
-  loan: 8,           // H: 奨学金
-  gas: 9,            // I: ガス
-  kerosene: 10,      // J: 灯油
-  electric: 11,      // K: 電気
-  subscription: 12,  // L: サブスク
-  transport: 13,     // M: 移動費
-  phone: 14,         // N: 通信費
-  daily: 15,         // O: 日用品
-  hair: 16,          // P: 脱毛（32回分割）
-  pc: 17,            // Q: デスクトップPC（12回分割）
-  // R列はスキップ
-  extraSpend: 19,    // S: 予定：プラス支出
-  // T列はスキップ
-  balanceHokyo: 21,  // U: 予定：残高　北洋銀行
-  balanceRakuten: 22,// V: 予定：残高　楽天銀行
-  // W列はスキップ
-  notes: 24          // X: 備考
-};
-
-const CATEGORIES = [
-  { key: 'food', label: '食費', col: 6 },
-  { key: 'rent', label: '家賃', col: 7 },
-  { key: 'loan', label: '奨学金', col: 8 },
-  { key: 'gas', label: 'ガス', col: 9 },
-  { key: 'kerosene', label: '灯油', col: 10 },
-  { key: 'electric', label: '電気', col: 11 },
-  { key: 'subscription', label: 'サブスク', col: 12 },
-  { key: 'transport', label: '移動費', col: 13 },
-  { key: 'phone', label: '通信費', col: 14 },
-  { key: 'daily', label: '日用品', col: 15 },
-  { key: 'hair', label: '脱毛', col: 16 },
-  { key: 'pc', label: 'デスクトップPC', col: 17 },
-];
-
-// ── データ取得 ──
 function getAllData() {
   const sheet = getSheet();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return { rows: [], categories: CATEGORIES };
-
-  const data = sheet.getRange(2, 1, lastRow - 1, 24).getValues();
-  const rows = data.map((row, i) => parseRow(row, i + 2));
-
+  const data = sheet.getRange(2, 1, lastRow - 1, 22).getValues();
+  const rows = data.map((r, i) => parseRow(r, i + 2));
   return { rows, categories: CATEGORIES };
 }
 
-function getMonthData(dateStr) {
-  const allData = getAllData();
-  if (!dateStr) return allData;
-
-  const target = new Date(dateStr);
-  const row = allData.rows.find(r => {
-    const d = new Date(r.date);
-    return d.getFullYear() === target.getFullYear() && d.getMonth() === target.getMonth();
-  });
-
-  return { row: row || null, categories: CATEGORIES };
-}
-
-function getCategories() {
-  return { categories: CATEGORIES };
-}
-
-function parseRow(row, rowNum) {
-  const expenses = {};
-  CATEGORIES.forEach(cat => {
-    expenses[cat.key] = row[cat.col - 1] || 0;
-  });
-
+function parseRow(r, rowNum) {
   return {
     rowNum,
-    date: row[0] ? Utilities.formatDate(new Date(row[0]), 'Asia/Tokyo', 'yyyy-MM-dd') : null,
-    income: row[1] || 0,
-    bonus: row[2] || 0,
-    totalExpense: row[3] || 0,
-    expenses,
-    extraSpend: row[18] || 0,
-    balanceHokyo: row[20] || 0,
-    balanceRakuten: row[21] || 0,
-    notes: row[23] || ''
+    date: r[0] ? Utilities.formatDate(new Date(r[0]), 'Asia/Tokyo', 'yyyy-MM') : null,
+    salary:        r[1]  || 0,
+    sideIncome:    r[2]  || 0,
+    otherIncome:   r[3]  || 0,
+    rent:          r[4]  || 0,
+    food:          r[5]  || 0,
+    electric:      r[6]  || 0,
+    gas:           r[7]  || 0,
+    water:         r[8]  || 0,
+    phone:         r[9]  || 0,
+    subscription:  r[10] || 0,
+    transport:     r[11] || 0,
+    daily:         r[12] || 0,
+    insurance:     r[13] || 0,
+    loan:          r[14] || 0,
+    hobby:         r[15] || 0,
+    beauty:        r[16] || 0,
+    otherExpense:  r[17] || 0,
+    extraExpense:  r[18] || 0,
+    balanceHokyo:  r[19] || 0,
+    balanceRakuten:r[20] || 0,
+    notes:         r[21] || ''
   };
 }
 
-// ── データ更新 ──
 function updateRow(body) {
   const sheet = getSheet();
-  const rowNum = body.rowNum;
-  if (!rowNum) return { error: 'rowNum is required' };
+  const rn = body.rowNum;
+  if (!rn) return { error: 'rowNum required' };
 
-  // 各フィールドを更新
-  if (body.income !== undefined) sheet.getRange(rowNum, COLUMN_MAP.income).setValue(body.income);
-  if (body.bonus !== undefined) sheet.getRange(rowNum, COLUMN_MAP.bonus).setValue(body.bonus);
-  if (body.extraSpend !== undefined) sheet.getRange(rowNum, COLUMN_MAP.extraSpend).setValue(body.extraSpend);
-  if (body.notes !== undefined) sheet.getRange(rowNum, COLUMN_MAP.notes).setValue(body.notes);
-  if (body.balanceHokyo !== undefined) sheet.getRange(rowNum, COLUMN_MAP.balanceHokyo).setValue(body.balanceHokyo);
-  if (body.balanceRakuten !== undefined) sheet.getRange(rowNum, COLUMN_MAP.balanceRakuten).setValue(body.balanceRakuten);
-
-  // カテゴリ別支出の更新
-  if (body.expenses) {
-    CATEGORIES.forEach(cat => {
-      if (body.expenses[cat.key] !== undefined) {
-        sheet.getRange(rowNum, cat.col).setValue(body.expenses[cat.key]);
-      }
-    });
-  }
-
-  // 支出合計を再計算
-  recalcTotalExpense(sheet, rowNum);
-
-  return { success: true, rowNum };
+  Object.keys(COL).forEach(key => {
+    if (key !== 'date' && body[key] !== undefined) {
+      sheet.getRange(rn, COL[key]).setValue(body[key]);
+    }
+  });
+  return { success: true, rowNum: rn };
 }
 
 function addRow(body) {
   const sheet = getSheet();
-  const lastRow = sheet.getLastRow();
-  const newRow = lastRow + 1;
+  const newRow = sheet.getLastRow() + 1;
+  const dateStr = body.date || new Date().toISOString().slice(0, 7);
+  sheet.getRange(newRow, COL.date).setValue(new Date(dateStr + '-01'));
 
-  const date = body.date ? new Date(body.date) : new Date();
-  sheet.getRange(newRow, COLUMN_MAP.date).setValue(date);
-  sheet.getRange(newRow, COLUMN_MAP.income).setValue(body.income || 0);
-  sheet.getRange(newRow, COLUMN_MAP.bonus).setValue(body.bonus || 0);
-  sheet.getRange(newRow, COLUMN_MAP.extraSpend).setValue(body.extraSpend || 0);
-  sheet.getRange(newRow, COLUMN_MAP.notes).setValue(body.notes || '');
-
-  if (body.expenses) {
-    CATEGORIES.forEach(cat => {
-      sheet.getRange(newRow, cat.col).setValue(body.expenses[cat.key] || 0);
-    });
-  }
-
-  recalcTotalExpense(sheet, newRow);
-
+  Object.keys(COL).forEach(key => {
+    if (key !== 'date' && body[key] !== undefined) {
+      sheet.getRange(newRow, COL[key]).setValue(body[key]);
+    }
+  });
   return { success: true, rowNum: newRow };
 }
 
 function deleteRow(body) {
   const sheet = getSheet();
-  const rowNum = body.rowNum;
-  if (!rowNum || rowNum < 2) return { error: 'Invalid rowNum' };
-
-  sheet.deleteRow(rowNum);
+  if (!body.rowNum || body.rowNum < 2) return { error: 'Invalid rowNum' };
+  sheet.deleteRow(body.rowNum);
   return { success: true };
 }
 
-function recalcTotalExpense(sheet, rowNum) {
-  let total = 0;
-  CATEGORIES.forEach(cat => {
-    total += Number(sheet.getRange(rowNum, cat.col).getValue()) || 0;
-  });
-  sheet.getRange(rowNum, COLUMN_MAP.totalExpense).setValue(total);
+// ── Setup ──
+
+function setupHeader() {
+  const sheet = getSheet();
+  const h = [
+    '年月','給与','副収入','その他収入',
+    '家賃','食費','電気','ガス','水道',
+    '通信費','サブスク','交通費','日用品',
+    '保険','ローン','趣味・娯楽','美容',
+    'その他支出','臨時支出',
+    '北洋銀行','楽天銀行','備考'
+  ];
+  sheet.getRange(1, 1, 1, h.length).setValues([h]);
+  sheet.getRange(1, 1, 1, h.length).setFontWeight('bold');
+  sheet.setFrozenRows(1);
 }
