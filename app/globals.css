@@ -1228,6 +1228,99 @@ html, body {
   align-items: center;
 }
 
+/* ── Grouped Input Form ── */
+
+.form-card-group {
+  padding: 0;
+  overflow: hidden;
+}
+
+.form-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  cursor: pointer;
+  background: var(--bg-card);
+  transition: background 0.15s;
+}
+
+.form-group-header:active { background: var(--accent-dim); }
+
+.form-group-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.form-group-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.form-group-total {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.form-card-group .form-group {
+  padding: 0 16px;
+}
+
+.form-card-group .form-group:last-of-type {
+  padding-bottom: 14px;
+}
+
+/* ── Category Group Sections (Settings) ── */
+
+.cat-group-section {
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.cat-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.cat-group-header:active { background: var(--accent-dim); }
+
+.cat-group-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.cat-group-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cat-group-count {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+
+.cat-group-body {
+  padding: 0 10px 12px;
+  border-top: 1px solid var(--border);
+}
+
 /* ── Category Management ── */
 
 .cat-list {

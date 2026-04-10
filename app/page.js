@@ -307,7 +307,7 @@ export default function Home() {
       )}
       {view === 'input' && (
         <InputView
-          row={row} rows={rows} labels={customLabels} catConfig={catConfig}
+          row={row} rows={rows} labels={customLabels} catConfig={catConfig} groups={groups}
           onSave={handleSave} onAdd={handleAdd} saving={saving}
           onSettings={openSettings}
         />
@@ -608,9 +608,14 @@ function HistoryView({ rows, onSelect }) {
 }
 
 // ── Input View ──
-function InputView({ row, rows, labels, catConfig, onSave, onAdd, saving, onSettings }) {
+function InputView({ row, rows, labels, catConfig, groups, onSave, onAdd, saving, onSettings }) {
   const initial = row || {};
   const [form, setForm] = useState(() => buildForm(initial));
+  const [openGroups, setOpenGroups] = useState(() => {
+    const init = {};
+    groups.forEach(g => { init[g.id] = true; });
+    return init;
+  });
 
   useEffect(() => { if (row) setForm(buildForm(row)); }, [row]);
 
@@ -626,6 +631,7 @@ function InputView({ row, rows, labels, catConfig, onSave, onAdd, saving, onSett
   }
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+  const toggleInputGroup = (id) => { haptic.light(); setOpenGroups(prev => ({ ...prev, [id]: !prev[id] })); };
 
   const handleSubmit = () => {
     if (!row || !rows.find(r => r.date === form.date)) {
@@ -635,6 +641,11 @@ function InputView({ row, rows, labels, catConfig, onSave, onAdd, saving, onSett
       onSave(row.rowNum, updates);
     }
   };
+
+  // Build grouped expense keys
+  const visibleExpense = new Set(catConfig.expense);
+  const groupedKeys = new Set(groups.flatMap(g => g.keys));
+  const ungroupedKeys = catConfig.expense.filter(k => !groupedKeys.has(k));
 
   return (
     <div className="fade-in">
@@ -663,14 +674,45 @@ function InputView({ row, rows, labels, catConfig, onSave, onAdd, saving, onSett
         </div>
 
         <div className="section-title">Expenses</div>
-        <div className="form-card">
-          {catConfig.expense.map(k => (
-            <div key={k} className="form-group">
-              <label className="form-label">{labels[k] || EXPENSE_LABELS[k]}</label>
-              <NumInput value={form[k]} onChange={v => set(k, v)} />
+
+        {groups.map(g => {
+          const gKeys = g.keys.filter(k => visibleExpense.has(k));
+          if (gKeys.length === 0) return null;
+          const groupTotal = gKeys.reduce((s, k) => s + (form[k] || 0), 0);
+          const isOpen = openGroups[g.id] !== false;
+
+          return (
+            <div key={g.id} className="form-card form-card-group">
+              <div className="form-group-header" onClick={() => toggleInputGroup(g.id)}>
+                <div className="form-group-header-left">
+                  <span className="form-group-name">{g.name}</span>
+                  <span className="form-group-total">{formatYen(groupTotal)}</span>
+                </div>
+                <svg className={`group-chevron ${isOpen ? 'open' : ''}`}
+                  width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+              {isOpen && gKeys.map(k => (
+                <div key={k} className="form-group">
+                  <label className="form-label">{labels[k] || EXPENSE_LABELS[k]}</label>
+                  <NumInput value={form[k]} onChange={v => set(k, v)} />
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          );
+        })}
+
+        {ungroupedKeys.length > 0 && (
+          <div className="form-card">
+            {ungroupedKeys.map(k => (
+              <div key={k} className="form-group">
+                <label className="form-label">{labels[k] || EXPENSE_LABELS[k]}</label>
+                <NumInput value={form[k]} onChange={v => set(k, v)} />
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="section-title">Balance & Notes</div>
         <div className="form-card">
@@ -1100,22 +1142,27 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
   // Hidden categories
   const hiddenIncome = INCOME_KEYS.filter(k => !catConfig.income.includes(k));
   const hiddenExpense = EXPENSE_KEYS.filter(k => !catConfig.expense.includes(k));
+  const [openCatGroups, setOpenCatGroups] = useState(() => {
+    const init = {};
+    groups.forEach(g => { init[g.id] = true; });
+    init._ungrouped = true;
+    return init;
+  });
+  const toggleCatGroup = (id) => { haptic.light(); setOpenCatGroups(prev => ({ ...prev, [id]: !prev[id] })); };
 
-  // Category list renderer
-  const renderCatList = (type, allLabels) => {
-    const items = type === 'income' ? catConfig.income : catConfig.expense;
-    const hidden = type === 'income' ? hiddenIncome : hiddenExpense;
-
+  // Income list renderer (flat)
+  const renderIncomeList = () => {
+    const items = catConfig.income;
     return (
       <>
         <DragList
           items={items}
-          onReorder={(from, to) => catActions.reorder(type, from, to)}
+          onReorder={(from, to) => catActions.reorder('income', from, to)}
           renderItem={(k) => (
             <>
-              <input className="cat-item-input" value={labels[k] || allLabels[k] || ''}
+              <input className="cat-item-input" value={labels[k] || INCOME_LABELS[k] || ''}
                 onChange={e => onUpdate(k, e.target.value)} />
-              <button className="cat-item-delete" onClick={() => { haptic.medium(); catActions.hide(type, k); }}>
+              <button className="cat-item-delete" onClick={() => { haptic.medium(); catActions.hide('income', k); }}>
                 <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -1123,33 +1170,42 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
             </>
           )}
         />
-
-        {hidden.length > 0 && (
+        {hiddenIncome.length > 0 && (
           <div style={{ marginTop: 8 }}>
-            {showAddPicker === type ? (
+            {showAddPicker === 'income' ? (
               <div className="cat-add-picker">
-                {hidden.map(k => (
+                {hiddenIncome.map(k => (
                   <button key={k} className="cat-add-chip"
-                    onClick={() => { haptic.light(); catActions.show(type, k); if (hidden.length <= 1) setShowAddPicker(null); }}>
-                    + {labels[k] || allLabels[k]}
+                    onClick={() => { haptic.light(); catActions.show('income', k); if (hiddenIncome.length <= 1) setShowAddPicker(null); }}>
+                    + {labels[k] || INCOME_LABELS[k]}
                   </button>
                 ))}
-                <button className="cat-add-chip cat-add-chip-cancel" onClick={() => setShowAddPicker(null)}>
-                  キャンセル
-                </button>
+                <button className="cat-add-chip cat-add-chip-cancel" onClick={() => setShowAddPicker(null)}>キャンセル</button>
               </div>
             ) : (
-              <button className="cat-add-btn" onClick={() => setShowAddPicker(type)}>
+              <button className="cat-add-btn" onClick={() => setShowAddPicker('income')}>
                 <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                 </svg>
-                カテゴリを追加 ({hidden.length})
+                カテゴリを追加 ({hiddenIncome.length})
               </button>
             )}
           </div>
         )}
       </>
     );
+  };
+
+  // Per-group add: hidden keys that could be added to this group
+  const addableForGroup = (g) => {
+    return hiddenExpense.filter(k => !g.keys.includes(k));
+  };
+
+  // Add a hidden key into a group and show it
+  const addKeyToGroup = (groupId, key) => {
+    haptic.light();
+    catActions.show('expense', key);
+    onUpdateGroups(groups.map(g => g.id === groupId ? { ...g, keys: [...g.keys, key] } : g));
   };
 
   return (
@@ -1175,15 +1231,144 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
 
             <div style={{ marginBottom: 16 }}>
               <div className="section-title">Income</div>
-              {renderCatList('income', INCOME_LABELS)}
+              {renderIncomeList()}
             </div>
 
-            <div style={{ marginBottom: 16 }}>
-              <div className="section-title">Expenses</div>
-              {renderCatList('expense', EXPENSE_LABELS)}
-            </div>
+            <div className="section-title">Expenses</div>
 
-            <button className="btn btn-secondary" style={{ fontSize: 12, padding: '10px' }}
+            {groups.map(g => {
+              const gKeys = g.keys.filter(k => catConfig.expense.includes(k));
+              const isOpen = openCatGroups[g.id] !== false;
+              const addable = addableForGroup(g);
+
+              return (
+                <div key={g.id} className="cat-group-section">
+                  <div className="cat-group-header" onClick={() => toggleCatGroup(g.id)}>
+                    <span className="cat-group-name">{g.name}</span>
+                    <div className="cat-group-header-right">
+                      <span className="cat-group-count">{gKeys.length}</span>
+                      <svg className={`group-chevron ${isOpen ? 'open' : ''}`}
+                        width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
+                  {isOpen && (
+                    <div className="cat-group-body">
+                      <DragList
+                        items={gKeys}
+                        onReorder={(from, to) => {
+                          const newKeys = [...gKeys];
+                          const [item] = newKeys.splice(from, 1);
+                          newKeys.splice(to, 0, item);
+                          onUpdateGroups(groups.map(gg =>
+                            gg.id === g.id ? { ...gg, keys: [...newKeys, ...gg.keys.filter(k => !catConfig.expense.includes(k))] } : gg
+                          ));
+                        }}
+                        renderItem={(k) => (
+                          <>
+                            <input className="cat-item-input" value={labels[k] || EXPENSE_LABELS[k] || ''}
+                              onChange={e => onUpdate(k, e.target.value)} />
+                            <button className="cat-item-delete" onClick={() => { haptic.medium(); catActions.hide('expense', k); }}>
+                              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </>
+                        )}
+                      />
+                      {addable.length > 0 && (
+                        <div style={{ marginTop: 6 }}>
+                          {showAddPicker === g.id ? (
+                            <div className="cat-add-picker">
+                              {addable.map(k => (
+                                <button key={k} className="cat-add-chip"
+                                  onClick={() => { addKeyToGroup(g.id, k); if (addable.length <= 1) setShowAddPicker(null); }}>
+                                  + {labels[k] || EXPENSE_LABELS[k]}
+                                </button>
+                              ))}
+                              <button className="cat-add-chip cat-add-chip-cancel" onClick={() => setShowAddPicker(null)}>キャンセル</button>
+                            </div>
+                          ) : (
+                            <button className="cat-add-btn" onClick={() => setShowAddPicker(g.id)}>
+                              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                              </svg>
+                              カテゴリを追加
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {(() => {
+              const allGroupedKeys = new Set(groups.flatMap(g => g.keys));
+              const ungrouped = catConfig.expense.filter(k => !allGroupedKeys.has(k));
+              if (ungrouped.length === 0) return null;
+              const isOpen = openCatGroups._ungrouped !== false;
+              return (
+                <div className="cat-group-section">
+                  <div className="cat-group-header" onClick={() => toggleCatGroup('_ungrouped')}>
+                    <span className="cat-group-name">未分類</span>
+                    <div className="cat-group-header-right">
+                      <span className="cat-group-count">{ungrouped.length}</span>
+                      <svg className={`group-chevron ${isOpen ? 'open' : ''}`}
+                        width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
+                  {isOpen && (
+                    <div className="cat-group-body">
+                      <DragList
+                        items={ungrouped}
+                        onReorder={(from, to) => catActions.reorder('expense', catConfig.expense.indexOf(ungrouped[from]), catConfig.expense.indexOf(ungrouped[to]))}
+                        renderItem={(k) => (
+                          <>
+                            <input className="cat-item-input" value={labels[k] || EXPENSE_LABELS[k] || ''}
+                              onChange={e => onUpdate(k, e.target.value)} />
+                            <button className="cat-item-delete" onClick={() => { haptic.medium(); catActions.hide('expense', k); }}>
+                              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </>
+                        )}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {hiddenExpense.length > 0 && !groups.some(g => showAddPicker === g.id) && (
+              <div style={{ marginTop: 8 }}>
+                {showAddPicker === 'expense_global' ? (
+                  <div className="cat-add-picker">
+                    {hiddenExpense.map(k => (
+                      <button key={k} className="cat-add-chip"
+                        onClick={() => { haptic.light(); catActions.show('expense', k); if (hiddenExpense.length <= 1) setShowAddPicker(null); }}>
+                        + {labels[k] || EXPENSE_LABELS[k]}
+                      </button>
+                    ))}
+                    <button className="cat-add-chip cat-add-chip-cancel" onClick={() => setShowAddPicker(null)}>キャンセル</button>
+                  </div>
+                ) : (
+                  <button className="cat-add-btn" onClick={() => setShowAddPicker('expense_global')}>
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                    非表示カテゴリを復元 ({hiddenExpense.length})
+                  </button>
+                )}
+              </div>
+            )}
+
+            <button className="btn btn-secondary" style={{ fontSize: 12, padding: '10px', marginTop: 16 }}
               onClick={() => { catActions.reset(); setShowAddPicker(null); }}>
               デフォルトに戻す
             </button>
