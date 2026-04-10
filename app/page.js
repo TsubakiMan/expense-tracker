@@ -19,16 +19,65 @@ const DEMO_ROWS = [
   { rowNum:7, date:'2026-04', salary:220000, sideIncome:0, otherIncome:0, rent:43270, food:48000, electric:4500, gas:3800, water:3200, phone:5350, subscription:3980, transport:6500, daily:2800, insurance:5000, loan:15000, hobby:6000, beauty:5000, otherExpense:2000, extraExpense:0, balanceHokyo:322000, balanceRakuten:252000, notes:'' },
 ];
 
+// ── Custom Label Hook ──
+function useCustomLabels() {
+  const [labels, setLabels] = useState({ ...EXPENSE_LABELS, ...INCOME_LABELS });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('customLabels');
+      if (saved) setLabels(prev => ({ ...prev, ...JSON.parse(saved) }));
+    } catch {}
+  }, []);
+
+  const updateLabel = (key, newLabel) => {
+    setLabels(prev => {
+      const next = { ...prev, [key]: newLabel };
+      try { localStorage.setItem('customLabels', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  return [labels, updateLabel];
+}
+
+// ── Number Input Helper: allows clearing the field ──
+function NumInput({ value, onChange, ...props }) {
+  const [display, setDisplay] = useState(String(value || ''));
+
+  useEffect(() => {
+    setDisplay(value ? String(value) : '');
+  }, [value]);
+
+  return (
+    <input
+      {...props}
+      type="number"
+      inputMode="numeric"
+      className="form-input"
+      placeholder="0"
+      value={display}
+      onFocus={e => e.target.select()}
+      onChange={e => {
+        setDisplay(e.target.value);
+        onChange(e.target.value === '' ? 0 : Number(e.target.value));
+      }}
+    />
+  );
+}
+
 // ── Main App ──
 export default function Home() {
   const [rows, setRows] = useState([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [view, setView] = useState('home');
   const [editModal, setEditModal] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
   const [toast, setToast] = useState('');
   const [saving, setSaving] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [customLabels, updateLabel] = useCustomLabels();
 
   const loadData = useCallback(async () => {
     try {
@@ -48,10 +97,7 @@ export default function Home() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const showToast = (msg) => {
-    setToast(msg);
-    setTimeout(() => setToast(''), 2500);
-  };
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2500); };
 
   const handleSave = async (rowNum, updates) => {
     setSaving(true);
@@ -64,9 +110,7 @@ export default function Home() {
       }
       showToast('保存しました');
       setEditModal(null);
-    } catch (e) {
-      showToast('エラー: ' + e.message);
-    }
+    } catch (e) { showToast('エラー: ' + e.message); }
     setSaving(false);
   };
 
@@ -82,20 +126,11 @@ export default function Home() {
       }
       showToast('追加しました');
       setView('home');
-    } catch (e) {
-      showToast('エラー: ' + e.message);
-    }
+    } catch (e) { showToast('エラー: ' + e.message); }
     setSaving(false);
   };
 
-  if (!loaded) {
-    return (
-      <div className="loading">
-        <div className="spinner" />
-        <span className="loading-text">Loading...</span>
-      </div>
-    );
-  }
+  if (!loaded) return <div className="loading"><div className="spinner" /><span className="loading-text">Loading...</span></div>;
 
   const row = rows[currentIdx];
   const prevMonth = () => setCurrentIdx(i => Math.max(0, i - 1));
@@ -105,11 +140,13 @@ export default function Home() {
     <div className="app">
       {isDemo && <div className="demo-banner">DEMO MODE</div>}
 
-      {view === 'home' && row && (
+      {view === 'home' && (
         <HomeView
-          row={row} rows={rows}
+          row={row} rows={rows} labels={customLabels}
           currentIdx={currentIdx} prevMonth={prevMonth} nextMonth={nextMonth}
           onEdit={(item) => setEditModal(item)}
+          onSettings={() => setShowSettings(true)}
+          onGoInput={() => setView('input')}
         />
       )}
       {view === 'history' && (
@@ -117,18 +154,21 @@ export default function Home() {
       )}
       {view === 'input' && (
         <InputView
-          row={row} rows={rows}
+          row={row} rows={rows} labels={customLabels}
           onSave={handleSave} onAdd={handleAdd} saving={saving}
+          onSettings={() => setShowSettings(true)}
         />
       )}
-      {view === 'forecast' && (
-        <ForecastView rows={rows} />
-      )}
+      {view === 'forecast' && <ForecastView rows={rows} labels={customLabels} />}
 
       {editModal && (
-        <EditModal
-          item={editModal} onSave={handleSave}
-          onClose={() => setEditModal(null)} saving={saving}
+        <EditModal item={editModal} onSave={handleSave} onClose={() => setEditModal(null)} saving={saving} />
+      )}
+
+      {showSettings && (
+        <SettingsModal
+          labels={customLabels} onUpdate={updateLabel}
+          onClose={() => setShowSettings(false)}
         />
       )}
 
@@ -154,14 +194,34 @@ export default function Home() {
 }
 
 // ── Home View ──
-function HomeView({ row, rows, currentIdx, prevMonth, nextMonth, onEdit }) {
+function HomeView({ row, rows, labels, currentIdx, prevMonth, nextMonth, onEdit, onSettings, onGoInput }) {
+  if (!row) {
+    return (
+      <div className="fade-in">
+        <Header onSettings={onSettings} />
+        <div className="empty-state">
+          <div className="empty-icon">
+            <svg fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+          </div>
+          <div className="empty-title">データがありません</div>
+          <div className="empty-desc">「入力」タブから最初の月次データを追加してください</div>
+          <button className="btn btn-primary" style={{ width: 'auto', padding: '12px 32px' }} onClick={onGoInput}>
+            データを入力する
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const inc = totalIncome(row);
   const exp = totalExpense(row);
   const sur = surplus(row);
   const maxExp = Math.max(...EXPENSE_KEYS.map(k => row[k] || 0), 1);
 
   const expenseItems = EXPENSE_KEYS
-    .map(k => ({ key: k, label: EXPENSE_LABELS[k], amount: row[k] || 0 }))
+    .map(k => ({ key: k, label: labels[k] || EXPENSE_LABELS[k], amount: row[k] || 0 }))
     .filter(e => e.amount > 0)
     .sort((a, b) => b.amount - a.amount);
 
@@ -173,16 +233,24 @@ function HomeView({ row, rows, currentIdx, prevMonth, nextMonth, onEdit }) {
       <div className="header">
         <div className="header-top">
           <span className="header-brand">Money Flow</span>
-          <div className="month-nav">
-            <button onClick={prevMonth} disabled={currentIdx === 0}>&lt;</button>
-            <span className="current-month">{formatMonth(row.date)}</span>
-            <button onClick={nextMonth} disabled={currentIdx === rows.length - 1}>&gt;</button>
+          <div className="header-actions">
+            <div className="month-nav">
+              <button onClick={prevMonth} disabled={currentIdx === 0}>&lt;</button>
+              <span className="current-month">{formatMonth(row.date)}</span>
+              <button onClick={nextMonth} disabled={currentIdx === rows.length - 1}>&gt;</button>
+            </div>
+            <button className="header-btn" onClick={onSettings} title="設定">
+              <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
 
       <div className="hero">
-        <div className="hero-label">MONTHLY BALANCE</div>
+        <div className="hero-label">Monthly Balance</div>
         <div className={`hero-amount ${sur >= 0 ? 'positive' : 'negative'}`}>
           {sur >= 0 ? '+' : ''}{formatYen(sur)}
         </div>
@@ -203,7 +271,6 @@ function HomeView({ row, rows, currentIdx, prevMonth, nextMonth, onEdit }) {
         </div>
       </div>
 
-      {/* Income Section */}
       <div className="section">
         <div className="section-title">Income</div>
         <div className="card">
@@ -212,15 +279,17 @@ function HomeView({ row, rows, currentIdx, prevMonth, nextMonth, onEdit }) {
             if (v === 0) return null;
             return (
               <div key={k} className="stat-row">
-                <span className="stat-label">{INCOME_LABELS[k]}</span>
+                <span className="stat-label">{labels[k] || INCOME_LABELS[k]}</span>
                 <span className="stat-value income">{formatYen(v)}</span>
               </div>
             );
           })}
+          {INCOME_KEYS.every(k => !row[k]) && (
+            <div style={{ padding: '8px 0', fontSize: 13, color: 'var(--text-muted)' }}>収入データなし</div>
+          )}
         </div>
       </div>
 
-      {/* Expense Donut */}
       {expenseItems.length > 0 && (
         <div className="section">
           <div className="section-title">Expenses</div>
@@ -244,16 +313,12 @@ function HomeView({ row, rows, currentIdx, prevMonth, nextMonth, onEdit }) {
         </div>
       )}
 
-      {/* Expense Bars */}
       <div className="section">
         <div className="section-title">Breakdown</div>
         <div className="expense-bars">
           {expenseItems.map(e => (
-            <div
-              key={e.key}
-              className="expense-bar-item"
-              onClick={() => onEdit({ key: e.key, label: e.label, value: e.amount, rowNum: row.rowNum })}
-            >
+            <div key={e.key} className="expense-bar-item"
+              onClick={() => onEdit({ key: e.key, label: e.label, value: e.amount, rowNum: row.rowNum })}>
               <div className="expense-bar-item-top">
                 <span className="label">{e.label}</span>
                 <span className="amount">{formatYen(e.amount)}</span>
@@ -263,17 +328,39 @@ function HomeView({ row, rows, currentIdx, prevMonth, nextMonth, onEdit }) {
               </div>
             </div>
           ))}
+          {expenseItems.length === 0 && (
+            <div className="card" style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+              支出データなし
+            </div>
+          )}
         </div>
       </div>
 
       {row.notes && (
         <div className="section">
           <div className="section-title">Notes</div>
-          <div className="card" style={{ padding: 14, fontSize: 13, color: 'var(--text-secondary)' }}>
-            {row.notes}
-          </div>
+          <div className="card" style={{ padding: 14, fontSize: 13, color: 'var(--text-secondary)' }}>{row.notes}</div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Header (reusable) ──
+function Header({ onSettings }) {
+  return (
+    <div className="header">
+      <div className="header-top">
+        <span className="header-brand">Money Flow</span>
+        {onSettings && (
+          <button className="header-btn" onClick={onSettings}>
+            <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -282,26 +369,22 @@ function HomeView({ row, rows, currentIdx, prevMonth, nextMonth, onEdit }) {
 function HistoryView({ rows, onSelect }) {
   return (
     <div className="fade-in">
-      <div className="header">
-        <div className="header-top">
-          <span className="header-brand">Money Flow</span>
-        </div>
-      </div>
-
+      <div className="header"><div className="header-top"><span className="header-brand">Money Flow</span></div></div>
       <div className="section">
         <div className="section-title">Monthly History</div>
+        {rows.length === 0 && (
+          <div className="card" style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+            データがありません
+          </div>
+        )}
         {[...rows].reverse().map((row, _i) => {
           const idx = rows.length - 1 - _i;
           const sur = surplus(row);
-          const inc = totalIncome(row);
-          const exp = totalExpense(row);
           return (
             <div key={row.rowNum} className="history-item" onClick={() => onSelect(idx)}>
               <div>
                 <div className="history-month">{formatMonth(row.date)}</div>
-                <div className="history-sub">
-                  {formatYen(inc)} / {formatYen(exp)}
-                </div>
+                <div className="history-sub">{formatYen(totalIncome(row))} / {formatYen(totalExpense(row))}</div>
               </div>
               <div className={`history-surplus ${sur >= 0 ? 'text-success' : 'text-danger'}`}>
                 {sur >= 0 ? '+' : ''}{formatYen(sur)}
@@ -315,35 +398,27 @@ function HistoryView({ rows, onSelect }) {
 }
 
 // ── Input View ──
-function InputView({ row, rows, onSave, onAdd, saving }) {
-  const isNew = !row;
-  const initial = row || { date: addMonths(currentMonth(), 0) };
+function InputView({ row, rows, labels, onSave, onAdd, saving, onSettings }) {
+  const initial = row || {};
+  const [form, setForm] = useState(() => buildForm(initial));
 
-  const [form, setForm] = useState(() => ({
-    date: initial.date || currentMonth(),
-    ...Object.fromEntries(INCOME_KEYS.map(k => [k, initial[k] || 0])),
-    ...Object.fromEntries(EXPENSE_KEYS.map(k => [k, initial[k] || 0])),
-    balanceHokyo: initial.balanceHokyo || 0,
-    balanceRakuten: initial.balanceRakuten || 0,
-    notes: initial.notes || '',
-  }));
+  useEffect(() => { if (row) setForm(buildForm(row)); }, [row]);
 
-  useEffect(() => {
-    if (!row) return;
-    setForm({
-      date: row.date || currentMonth(),
-      ...Object.fromEntries(INCOME_KEYS.map(k => [k, row[k] || 0])),
-      ...Object.fromEntries(EXPENSE_KEYS.map(k => [k, row[k] || 0])),
-      balanceHokyo: row.balanceHokyo || 0,
-      balanceRakuten: row.balanceRakuten || 0,
-      notes: row.notes || '',
-    });
-  }, [row]);
+  function buildForm(src) {
+    return {
+      date: src.date || currentMonth(),
+      ...Object.fromEntries(INCOME_KEYS.map(k => [k, src[k] || 0])),
+      ...Object.fromEntries(EXPENSE_KEYS.map(k => [k, src[k] || 0])),
+      balanceHokyo: src.balanceHokyo || 0,
+      balanceRakuten: src.balanceRakuten || 0,
+      notes: src.notes || '',
+    };
+  }
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
   const handleSubmit = () => {
-    if (isNew || !rows.find(r => r.date === form.date)) {
+    if (!row || !rows.find(r => r.date === form.date)) {
       onAdd(form);
     } else {
       const { date, ...updates } = form;
@@ -356,10 +431,14 @@ function InputView({ row, rows, onSave, onAdd, saving }) {
       <div className="header">
         <div className="header-top">
           <span className="header-brand">Money Flow</span>
+          <button className="header-btn" onClick={onSettings}>
+            <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
         </div>
-        <div style={{ marginTop: 4, fontSize: 15, fontWeight: 600 }}>
-          {formatMonth(form.date)}
-        </div>
+        <div style={{ marginTop: 6, fontSize: 15, fontWeight: 700 }}>{formatMonth(form.date)}</div>
       </div>
 
       <div className="section">
@@ -367,9 +446,8 @@ function InputView({ row, rows, onSave, onAdd, saving }) {
         <div className="form-card">
           {INCOME_KEYS.map(k => (
             <div key={k} className="form-group">
-              <label className="form-label">{INCOME_LABELS[k]}</label>
-              <input className="form-input" type="number" inputMode="numeric"
-                value={form[k]} onChange={e => set(k, Number(e.target.value))} />
+              <label className="form-label">{labels[k] || INCOME_LABELS[k]}</label>
+              <NumInput value={form[k]} onChange={v => set(k, v)} />
             </div>
           ))}
         </div>
@@ -378,9 +456,8 @@ function InputView({ row, rows, onSave, onAdd, saving }) {
         <div className="form-card">
           {['rent','loan','insurance','subscription','phone'].map(k => (
             <div key={k} className="form-group">
-              <label className="form-label">{EXPENSE_LABELS[k]}</label>
-              <input className="form-input" type="number" inputMode="numeric"
-                value={form[k]} onChange={e => set(k, Number(e.target.value))} />
+              <label className="form-label">{labels[k] || EXPENSE_LABELS[k]}</label>
+              <NumInput value={form[k]} onChange={v => set(k, v)} />
             </div>
           ))}
         </div>
@@ -389,9 +466,8 @@ function InputView({ row, rows, onSave, onAdd, saving }) {
         <div className="form-card">
           {['food','electric','gas','water','transport','daily','hobby','beauty','otherExpense','extraExpense'].map(k => (
             <div key={k} className="form-group">
-              <label className="form-label">{EXPENSE_LABELS[k]}</label>
-              <input className="form-input" type="number" inputMode="numeric"
-                value={form[k]} onChange={e => set(k, Number(e.target.value))} />
+              <label className="form-label">{labels[k] || EXPENSE_LABELS[k]}</label>
+              <NumInput value={form[k]} onChange={v => set(k, v)} />
             </div>
           ))}
         </div>
@@ -400,17 +476,15 @@ function InputView({ row, rows, onSave, onAdd, saving }) {
         <div className="form-card">
           <div className="form-group">
             <label className="form-label">北洋銀行</label>
-            <input className="form-input" type="number" inputMode="numeric"
-              value={form.balanceHokyo} onChange={e => set('balanceHokyo', Number(e.target.value))} />
+            <NumInput value={form.balanceHokyo} onChange={v => set('balanceHokyo', v)} />
           </div>
           <div className="form-group">
             <label className="form-label">楽天銀行</label>
-            <input className="form-input" type="number" inputMode="numeric"
-              value={form.balanceRakuten} onChange={e => set('balanceRakuten', Number(e.target.value))} />
+            <NumInput value={form.balanceRakuten} onChange={v => set('balanceRakuten', v)} />
           </div>
           <div className="form-group">
             <label className="form-label">備考</label>
-            <textarea className="form-input form-textarea"
+            <textarea className="form-input form-textarea" placeholder="メモを入力..."
               value={form.notes} onChange={e => set('notes', e.target.value)} />
           </div>
         </div>
@@ -423,8 +497,8 @@ function InputView({ row, rows, onSave, onAdd, saving }) {
   );
 }
 
-// ── Forecast View (Simulation) ──
-function ForecastView({ rows }) {
+// ── Forecast View ──
+function ForecastView({ rows, labels }) {
   const recent = rows.slice(-3);
   const defaultIncome = recent.length > 0
     ? Math.round(recent.reduce((s, r) => s + totalIncome(r), 0) / recent.length)
@@ -439,74 +513,48 @@ function ForecastView({ rows }) {
 
   const projection = useMemo(() => {
     if (rows.length === 0) return { months: [], adjusted: [], current: [] };
-
     const latest = rows[rows.length - 1];
     const baseBalance = (latest.balanceHokyo || 0) + (latest.balanceRakuten || 0);
-    const currentIncome = defaultIncome;
-    const months = [];
-    const adjusted = [];
-    const current = [];
-
-    let adjBal = baseBalance;
-    let curBal = baseBalance;
+    const months = [], adjusted = [], current = [];
+    let adjBal = baseBalance, curBal = baseBalance;
 
     for (let i = 1; i <= 12; i++) {
-      const m = addMonths(latest.date, i);
-      months.push(formatShortMonth(m));
-
+      months.push(formatShortMonth(addMonths(latest.date, i)));
       adjBal += simIncome - avgExpense;
       adjusted.push(adjBal);
-
-      curBal += currentIncome - avgExpense;
+      curBal += defaultIncome - avgExpense;
       current.push(curBal);
     }
-
     return { months, adjusted, current };
   }, [rows, simIncome, avgExpense, defaultIncome]);
 
   const monthlySurplus = simIncome - avgExpense;
   const yearSavings = monthlySurplus * 12;
   const savingsRate = simIncome > 0 ? Math.round((monthlySurplus / simIncome) * 100) : 0;
-
-  // Surplus history bar chart
   const histLabels = rows.map(r => formatShortMonth(r.date));
   const histData = rows.map(r => surplus(r));
 
   return (
     <div className="fade-in">
-      <div className="header">
-        <div className="header-top">
-          <span className="header-brand">Money Flow</span>
-        </div>
-      </div>
+      <div className="header"><div className="header-top"><span className="header-brand">Money Flow</span></div></div>
 
-      {/* Simulation Controls */}
       <div className="section">
         <div className="section-title">Simulation</div>
         <div className="sim-control">
           <div className="sim-label">月収を変更して未来をシミュレーション</div>
           <div className="sim-row">
             <button className="sim-btn" onClick={() => setSimIncome(v => Math.max(0, v - 10000))}>-</button>
-            <input
-              className="sim-input"
-              type="number"
-              inputMode="numeric"
-              value={simIncome}
-              onChange={e => setSimIncome(Number(e.target.value))}
-            />
+            <input className="sim-input" type="number" inputMode="numeric"
+              value={simIncome} onChange={e => setSimIncome(Number(e.target.value) || 0)} />
             <button className="sim-btn" onClick={() => setSimIncome(v => v + 10000)}>+</button>
           </div>
           <div className="sim-result">
             <div className="sim-stat">
-              <div className={`sim-stat-value ${monthlySurplus >= 0 ? 'text-success' : 'text-danger'}`}>
-                {formatYen(monthlySurplus)}
-              </div>
+              <div className={`sim-stat-value ${monthlySurplus >= 0 ? 'text-success' : 'text-danger'}`}>{formatYen(monthlySurplus)}</div>
               <div className="sim-stat-label">月間収支</div>
             </div>
             <div className="sim-stat">
-              <div className={`sim-stat-value ${yearSavings >= 0 ? 'text-success' : 'text-danger'}`}>
-                {formatYen(yearSavings)}
-              </div>
+              <div className={`sim-stat-value ${yearSavings >= 0 ? 'text-success' : 'text-danger'}`}>{formatYen(yearSavings)}</div>
               <div className="sim-stat-label">年間貯蓄</div>
             </div>
             <div className="sim-stat">
@@ -514,35 +562,28 @@ function ForecastView({ rows }) {
               <div className="sim-stat-label">平均支出</div>
             </div>
             <div className="sim-stat">
-              <div className={`sim-stat-value ${savingsRate >= 0 ? 'text-success' : 'text-danger'}`}>
-                {savingsRate}%
-              </div>
+              <div className={`sim-stat-value ${savingsRate >= 0 ? 'text-success' : 'text-danger'}`}>{savingsRate}%</div>
               <div className="sim-stat-label">貯蓄率</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Projection Chart */}
       {projection.months.length > 0 && (
         <div className="section">
           <div className="section-title">12-Month Projection</div>
           <div className="chart-card">
             <div className="chart-wrapper">
-              <ProjectionChart
-                months={projection.months}
-                adjusted={projection.adjusted}
-                current={simIncome !== defaultIncome ? projection.current : null}
-              />
+              <ProjectionChart months={projection.months} adjusted={projection.adjusted}
+                current={simIncome !== defaultIncome ? projection.current : null} />
             </div>
           </div>
         </div>
       )}
 
-      {/* Surplus History */}
       {rows.length > 1 && (
         <div className="section">
-          <div className="section-title">Monthly Surplus History</div>
+          <div className="section-title">Surplus History</div>
           <div className="chart-card">
             <div className="chart-wrapper">
               <SurplusBar labels={histLabels} data={histData} />
@@ -557,7 +598,6 @@ function ForecastView({ rows }) {
 // ── Edit Modal ──
 function EditModal({ item, onSave, onClose, saving }) {
   const [value, setValue] = useState(item.value);
-
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
@@ -567,18 +607,59 @@ function EditModal({ item, onSave, onClose, saving }) {
         </div>
         <div className="form-group">
           <label className="form-label">金額</label>
-          <input className="form-input" type="number" inputMode="numeric"
-            value={value} autoFocus onChange={e => setValue(Number(e.target.value))} />
+          <NumInput value={value} onChange={setValue} />
         </div>
         <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-          <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>
-            キャンセル
-          </button>
+          <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>キャンセル</button>
           <button className="btn btn-primary" style={{ flex: 1 }} disabled={saving}
             onClick={() => onSave(item.rowNum, { [item.key]: value })}>
             {saving ? '...' : '保存'}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Settings Modal ──
+function SettingsModal({ labels, onUpdate, onClose }) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title">カテゴリ名の設定</div>
+          <button className="modal-close" onClick={onClose}>x</button>
+        </div>
+
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+          名称をタップして変更できます
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div className="section-title">Income</div>
+          {INCOME_KEYS.map(k => (
+            <div key={k} className="settings-item">
+              <span className="settings-label">{INCOME_LABELS[k]}</span>
+              <input className="settings-input" value={labels[k] || ''}
+                onChange={e => onUpdate(k, e.target.value)} />
+            </div>
+          ))}
+        </div>
+
+        <div>
+          <div className="section-title">Expenses</div>
+          {EXPENSE_KEYS.map(k => (
+            <div key={k} className="settings-item">
+              <span className="settings-label">{EXPENSE_LABELS[k]}</span>
+              <input className="settings-input" value={labels[k] || ''}
+                onChange={e => onUpdate(k, e.target.value)} />
+            </div>
+          ))}
+        </div>
+
+        <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={onClose}>
+          完了
+        </button>
       </div>
     </div>
   );

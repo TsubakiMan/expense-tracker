@@ -4,7 +4,7 @@ export const metadata = {
   title: 'Money Flow',
   description: '収支管理・シミュレーション',
   manifest: '/manifest.json',
-  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'MoneyFlow' },
+  appleWebApp: { capable: true, statusBarStyle: 'default', title: 'MoneyFlow' },
 };
 
 export const viewport = {
@@ -12,7 +12,7 @@ export const viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: 'cover',
-  themeColor: '#050816',
+  themeColor: '#ffffff',
 };
 
 export default function RootLayout({ children }) {
