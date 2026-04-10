@@ -926,6 +926,237 @@ html, body {
   background: #fff;
 }
 
+/* ── Group Cards (Breakdown) ── */
+
+.group-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 6px;
+}
+
+.group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+
+.group-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-color {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.group-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.group-count {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.group-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.group-total {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.group-chevron {
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.group-chevron.open {
+  transform: rotate(180deg);
+}
+
+.group-bar-track {
+  height: 3px;
+  background: var(--bg);
+  border-radius: 3px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.group-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.group-children {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.group-child {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 0 7px 18px;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  transition: background 0.15s;
+}
+
+.group-child:active {
+  background: var(--accent-dim);
+}
+
+.group-child-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.group-child-amount {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* ── Settings Tabs ── */
+
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: var(--bg);
+  border-radius: var(--radius-xs);
+  padding: 3px;
+}
+
+.settings-tab {
+  flex: 1;
+  padding: 8px 0;
+  border: none;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.settings-tab.active {
+  background: var(--bg-card);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ── Group Settings ── */
+
+.group-setting-card {
+  background: var(--bg);
+  border-radius: var(--radius-xs);
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.group-setting-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.group-setting-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  flex: 1;
+  padding: 4px 0;
+}
+
+.group-setting-name:hover {
+  color: var(--accent);
+}
+
+.group-setting-delete {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+}
+
+.group-setting-delete:hover {
+  color: var(--danger);
+  background: var(--danger-dim);
+}
+
+.group-setting-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.group-key-chip {
+  padding: 4px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-card);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.group-key-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.group-key-chip.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.group-key-chip:not(.disabled):not(.active):hover {
+  border-color: var(--text-muted);
+}
+
+.group-add-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: center;
+}
+
 /* ── Utility ── */
 
 .fade-in { animation: fadeIn 0.4s ease; }

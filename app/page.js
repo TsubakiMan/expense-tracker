@@ -41,6 +41,37 @@ function useCustomLabels() {
   return [labels, updateLabel];
 }
 
+// ── Default Category Groups ──
+const DEFAULT_GROUPS = [
+  { id: 'housing', name: '住居・光熱', keys: ['rent', 'electric', 'gas', 'water'] },
+  { id: 'fixed', name: '固定費', keys: ['loan', 'insurance', 'subscription', 'phone'] },
+  { id: 'living', name: '生活費', keys: ['food', 'daily', 'transport'] },
+  { id: 'personal', name: '個人', keys: ['hobby', 'beauty'] },
+  { id: 'other', name: 'その他', keys: ['otherExpense', 'extraExpense'] },
+];
+
+function useGroups() {
+  const [groups, setGroups] = useState(DEFAULT_GROUPS);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('expenseGroups');
+      if (saved) setGroups(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  const saveGroups = (next) => {
+    setGroups(next);
+    try { localStorage.setItem('expenseGroups', JSON.stringify(next)); } catch {}
+  };
+
+  const updateGroups = (newGroups) => saveGroups(newGroups);
+
+  const resetGroups = () => saveGroups(DEFAULT_GROUPS);
+
+  return [groups, updateGroups, resetGroups];
+}
+
 // ── Number Input Helper: allows clearing the field ──
 function NumInput({ value, onChange, ...props }) {
   const [display, setDisplay] = useState(String(value || ''));
@@ -78,6 +109,7 @@ export default function Home() {
   const [isDemo, setIsDemo] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [customLabels, updateLabel] = useCustomLabels();
+  const [groups, updateGroups, resetGroups] = useGroups();
 
   const loadData = useCallback(async () => {
     try {
@@ -142,7 +174,7 @@ export default function Home() {
 
       {view === 'home' && (
         <HomeView
-          row={row} rows={rows} labels={customLabels}
+          row={row} rows={rows} labels={customLabels} groups={groups}
           currentIdx={currentIdx} prevMonth={prevMonth} nextMonth={nextMonth}
           onEdit={(item) => setEditModal(item)}
           onSettings={() => setShowSettings(true)}
@@ -168,6 +200,7 @@ export default function Home() {
       {showSettings && (
         <SettingsModal
           labels={customLabels} onUpdate={updateLabel}
+          groups={groups} onUpdateGroups={updateGroups} onResetGroups={resetGroups}
           onClose={() => setShowSettings(false)}
         />
       )}
@@ -194,7 +227,11 @@ export default function Home() {
 }
 
 // ── Home View ──
-function HomeView({ row, rows, labels, currentIdx, prevMonth, nextMonth, onEdit, onSettings, onGoInput }) {
+function HomeView({ row, rows, labels, groups, currentIdx, prevMonth, nextMonth, onEdit, onSettings, onGoInput }) {
+  const [expandedGroups, setExpandedGroups] = useState({});
+
+  const toggleGroup = (id) => setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
+
   if (!row) {
     return (
       <div className="fade-in">
@@ -218,15 +255,25 @@ function HomeView({ row, rows, labels, currentIdx, prevMonth, nextMonth, onEdit,
   const inc = totalIncome(row);
   const exp = totalExpense(row);
   const sur = surplus(row);
-  const maxExp = Math.max(...EXPENSE_KEYS.map(k => row[k] || 0), 1);
 
-  const expenseItems = EXPENSE_KEYS
-    .map(k => ({ key: k, label: labels[k] || EXPENSE_LABELS[k], amount: row[k] || 0 }))
-    .filter(e => e.amount > 0)
-    .sort((a, b) => b.amount - a.amount);
+  // Build grouped data
+  const groupedKeys = new Set(groups.flatMap(g => g.keys));
+  const ungroupedItems = EXPENSE_KEYS
+    .filter(k => !groupedKeys.has(k) && (row[k] || 0) > 0)
+    .map(k => ({ key: k, label: labels[k] || EXPENSE_LABELS[k], amount: row[k] || 0 }));
 
-  const donutData = expenseItems.map(e => e.amount);
-  const donutLabels = expenseItems.map(e => e.label);
+  const groupData = groups.map((g, gi) => {
+    const children = g.keys
+      .map(k => ({ key: k, label: labels[k] || EXPENSE_LABELS[k], amount: row[k] || 0 }))
+      .filter(c => c.amount > 0);
+    const total = children.reduce((s, c) => s + c.amount, 0);
+    return { ...g, children, total, colorIdx: gi };
+  }).filter(g => g.total > 0);
+
+  // Donut: group-level data
+  const donutData = [...groupData.map(g => g.total), ...ungroupedItems.map(u => u.amount)];
+  const donutLabels = [...groupData.map(g => g.name), ...ungroupedItems.map(u => u.label)];
+  const maxGroupExp = Math.max(...groupData.map(g => g.total), ...ungroupedItems.map(u => u.amount), 1);
 
   return (
     <div className="fade-in">
@@ -290,7 +337,7 @@ function HomeView({ row, rows, labels, currentIdx, prevMonth, nextMonth, onEdit,
         </div>
       </div>
 
-      {expenseItems.length > 0 && (
+      {donutData.length > 0 && (
         <div className="section">
           <div className="section-title">Expenses</div>
           <div className="chart-card">
@@ -302,10 +349,10 @@ function HomeView({ row, rows, labels, currentIdx, prevMonth, nextMonth, onEdit,
               </div>
             </div>
             <div className="legend">
-              {expenseItems.map((e, i) => (
-                <span key={e.key} className="legend-item">
+              {donutLabels.map((lbl, i) => (
+                <span key={i} className="legend-item">
                   <span className="legend-dot" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
-                  {e.label}
+                  {lbl}
                 </span>
               ))}
             </div>
@@ -316,7 +363,44 @@ function HomeView({ row, rows, labels, currentIdx, prevMonth, nextMonth, onEdit,
       <div className="section">
         <div className="section-title">Breakdown</div>
         <div className="expense-bars">
-          {expenseItems.map(e => (
+          {groupData.map((g, gi) => (
+            <div key={g.id} className="group-card">
+              <div className="group-header" onClick={() => toggleGroup(g.id)}>
+                <div className="group-header-left">
+                  <span className="group-color" style={{ background: CHART_COLORS[gi % CHART_COLORS.length] }} />
+                  <span className="group-name">{g.name}</span>
+                  <span className="group-count">{g.children.length}</span>
+                </div>
+                <div className="group-header-right">
+                  <span className="group-total">{formatYen(g.total)}</span>
+                  <svg className={`group-chevron ${expandedGroups[g.id] ? 'open' : ''}`}
+                    width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </div>
+              <div className="group-bar-track">
+                <div className="group-bar-fill" style={{
+                  width: `${(g.total / maxGroupExp) * 100}%`,
+                  background: CHART_COLORS[gi % CHART_COLORS.length],
+                  opacity: 0.6,
+                }} />
+              </div>
+              {expandedGroups[g.id] && (
+                <div className="group-children">
+                  {g.children.map(c => (
+                    <div key={c.key} className="group-child"
+                      onClick={() => onEdit({ key: c.key, label: c.label, value: c.amount, rowNum: row.rowNum })}>
+                      <span className="group-child-label">{c.label}</span>
+                      <span className="group-child-amount">{formatYen(c.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {ungroupedItems.map(e => (
             <div key={e.key} className="expense-bar-item"
               onClick={() => onEdit({ key: e.key, label: e.label, value: e.amount, rowNum: row.rowNum })}>
               <div className="expense-bar-item-top">
@@ -324,11 +408,12 @@ function HomeView({ row, rows, labels, currentIdx, prevMonth, nextMonth, onEdit,
                 <span className="amount">{formatYen(e.amount)}</span>
               </div>
               <div className="expense-bar-track">
-                <div className="expense-bar-fill" style={{ width: `${(e.amount / maxExp) * 100}%` }} />
+                <div className="expense-bar-fill" style={{ width: `${(e.amount / maxGroupExp) * 100}%` }} />
               </div>
             </div>
           ))}
-          {expenseItems.length === 0 && (
+
+          {groupData.length === 0 && ungroupedItems.length === 0 && (
             <div className="card" style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
               支出データなし
             </div>
@@ -688,40 +773,141 @@ function EditModal({ item, onSave, onClose, saving }) {
 }
 
 // ── Settings Modal ──
-function SettingsModal({ labels, onUpdate, onClose }) {
+function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups, onClose }) {
+  const [tab, setTab] = useState('labels');
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [newGroupName, setNewGroupName] = useState('');
+
+  const addGroup = () => {
+    if (!newGroupName.trim()) return;
+    const id = 'g_' + Date.now();
+    onUpdateGroups([...groups, { id, name: newGroupName.trim(), keys: [] }]);
+    setNewGroupName('');
+  };
+
+  const renameGroup = (id, name) => {
+    onUpdateGroups(groups.map(g => g.id === id ? { ...g, name } : g));
+  };
+
+  const deleteGroup = (id) => {
+    onUpdateGroups(groups.filter(g => g.id !== id));
+  };
+
+  const toggleKeyInGroup = (groupId, key) => {
+    onUpdateGroups(groups.map(g => {
+      if (g.id !== groupId) {
+        return { ...g, keys: g.keys.filter(k => k !== key) };
+      }
+      if (g.keys.includes(key)) {
+        return { ...g, keys: g.keys.filter(k => k !== key) };
+      }
+      return { ...g, keys: [...g.keys, key] };
+    }));
+  };
+
+  const assignedKeys = new Set(groups.flatMap(g => g.keys));
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <div className="modal-title">カテゴリ名の設定</div>
+          <div className="modal-title">設定</div>
           <button className="modal-close" onClick={onClose}>x</button>
         </div>
 
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
-          名称をタップして変更できます
+        <div className="settings-tabs">
+          <button className={`settings-tab ${tab === 'labels' ? 'active' : ''}`}
+            onClick={() => setTab('labels')}>カテゴリ名</button>
+          <button className={`settings-tab ${tab === 'groups' ? 'active' : ''}`}
+            onClick={() => setTab('groups')}>グループ</button>
         </div>
 
-        <div style={{ marginBottom: 16 }}>
-          <div className="section-title">Income</div>
-          {INCOME_KEYS.map(k => (
-            <div key={k} className="settings-item">
-              <span className="settings-label">{INCOME_LABELS[k]}</span>
-              <input className="settings-input" value={labels[k] || ''}
-                onChange={e => onUpdate(k, e.target.value)} />
+        {tab === 'labels' && (
+          <>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+              名称をタップして変更できます
             </div>
-          ))}
-        </div>
+            <div style={{ marginBottom: 16 }}>
+              <div className="section-title">Income</div>
+              {INCOME_KEYS.map(k => (
+                <div key={k} className="settings-item">
+                  <span className="settings-label">{INCOME_LABELS[k]}</span>
+                  <input className="settings-input" value={labels[k] || ''}
+                    onChange={e => onUpdate(k, e.target.value)} />
+                </div>
+              ))}
+            </div>
+            <div>
+              <div className="section-title">Expenses</div>
+              {EXPENSE_KEYS.map(k => (
+                <div key={k} className="settings-item">
+                  <span className="settings-label">{EXPENSE_LABELS[k]}</span>
+                  <input className="settings-input" value={labels[k] || ''}
+                    onChange={e => onUpdate(k, e.target.value)} />
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
-        <div>
-          <div className="section-title">Expenses</div>
-          {EXPENSE_KEYS.map(k => (
-            <div key={k} className="settings-item">
-              <span className="settings-label">{EXPENSE_LABELS[k]}</span>
-              <input className="settings-input" value={labels[k] || ''}
-                onChange={e => onUpdate(k, e.target.value)} />
+        {tab === 'groups' && (
+          <>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+              支出カテゴリをグループにまとめます。グループの合計が自動計算されます。
             </div>
-          ))}
-        </div>
+
+            {groups.map(g => (
+              <div key={g.id} className="group-setting-card">
+                <div className="group-setting-header">
+                  {editingGroup === g.id ? (
+                    <input className="settings-input" autoFocus
+                      value={g.name}
+                      onChange={e => renameGroup(g.id, e.target.value)}
+                      onBlur={() => setEditingGroup(null)}
+                      onKeyDown={e => e.key === 'Enter' && setEditingGroup(null)}
+                      style={{ flex: 1, fontSize: 13 }}
+                    />
+                  ) : (
+                    <span className="group-setting-name" onClick={() => setEditingGroup(g.id)}>
+                      {g.name}
+                    </span>
+                  )}
+                  <button className="group-setting-delete" onClick={() => deleteGroup(g.id)}>
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="group-setting-keys">
+                  {EXPENSE_KEYS.map(k => {
+                    const inThis = g.keys.includes(k);
+                    const inOther = !inThis && assignedKeys.has(k);
+                    return (
+                      <button key={k}
+                        className={`group-key-chip ${inThis ? 'active' : ''} ${inOther ? 'disabled' : ''}`}
+                        disabled={inOther}
+                        onClick={() => toggleKeyInGroup(g.id, k)}>
+                        {labels[k] || EXPENSE_LABELS[k]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+
+            <div className="group-add-row">
+              <input className="settings-input" placeholder="新しいグループ名..."
+                value={newGroupName} onChange={e => setNewGroupName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addGroup()}
+                style={{ flex: 1, fontSize: 13 }} />
+              <button className="btn btn-primary" style={{ width: 'auto', padding: '8px 16px', fontSize: 13 }}
+                onClick={addGroup}>追加</button>
+            </div>
+
+            <button className="btn btn-secondary" style={{ marginTop: 12, fontSize: 12, padding: '10px' }}
+              onClick={onResetGroups}>デフォルトに戻す</button>
+          </>
+        )}
 
         <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={onClose}>
           完了
