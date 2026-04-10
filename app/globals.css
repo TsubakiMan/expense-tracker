@@ -111,6 +111,26 @@ html, body {
 
 .header-btn:hover { background: var(--accent-dim); color: var(--accent); }
 
+.settings-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border: 1.5px solid var(--accent);
+  border-radius: 100px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.settings-pill:active { transform: scale(0.95); }
+.settings-pill:hover { background: var(--accent); color: #fff; }
+.settings-pill:hover svg { stroke: #fff; }
+
 .month-nav {
   display: flex;
   align-items: center;
