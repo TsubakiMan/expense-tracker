@@ -169,6 +169,7 @@ export default function Home() {
   const [customLabels, updateLabel] = useCustomLabels();
   const [groups, updateGroups, resetGroups] = useGroups();
   const [catConfig, catActions] = useCategoryConfig();
+  const [newCatModal, setNewCatModal] = useState(null); // 'income' | 'expense' | null
 
   // ── History-based navigation ──
   const isPopping = useRef(false);
@@ -198,13 +199,21 @@ export default function Home() {
     history.pushState({ view, modal: 'settings' }, '');
   }, [view]);
 
+  const openNewCatModal = useCallback((type) => {
+    haptic.light();
+    setNewCatModal(type);
+    history.pushState({ view, modal: 'newcat' }, '');
+  }, [view]);
+
   // Close modal without pushState (used by popstate and direct close)
   const closeEditModal = useCallback(() => setEditModal(null), []);
   const closeSettings = useCallback(() => setShowSettings(false), []);
+  const closeNewCatModal = useCallback(() => setNewCatModal(null), []);
 
   // Close modal with history.back (used by UI close buttons)
   const closeEditModalWithBack = useCallback(() => { history.back(); }, []);
   const closeSettingsWithBack = useCallback(() => { history.back(); }, []);
+  const closeNewCatModalWithBack = useCallback(() => { history.back(); }, []);
 
   // Listen for popstate (browser back)
   useEffect(() => {
@@ -212,13 +221,13 @@ export default function Home() {
       isPopping.current = true;
       const state = e.state || { view: 'home' };
 
-      // If a modal is open, close it
-      if (editModal) {
+      if (newCatModal) {
+        setNewCatModal(null);
+      } else if (editModal) {
         setEditModal(null);
       } else if (showSettings) {
         setShowSettings(false);
       } else {
-        // Navigate to the view in the history state
         setView(state.view || 'home');
       }
 
@@ -226,7 +235,7 @@ export default function Home() {
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [editModal, showSettings]);
+  }, [editModal, showSettings, newCatModal]);
 
   const loadData = useCallback(async () => {
     try {
@@ -254,33 +263,32 @@ export default function Home() {
 
   const handleSave = async (rowNum, updates) => {
     setSaving(true);
-    try {
-      if (isDemo) {
-        setRows(prev => prev.map(r => r.rowNum === rowNum ? { ...r, ...updates } : r));
-      } else {
-        await updateRow({ rowNum, ...updates });
-        await loadData();
-      }
-      showToast('保存しました');
-      if (editModal) closeEditModalWithBack();
-    } catch (e) { showToast('エラー: ' + e.message, true); }
+    // Optimistic update — apply locally first
+    setRows(prev => prev.map(r => r.rowNum === rowNum ? { ...r, ...updates } : r));
+    if (editModal) closeEditModalWithBack();
+    showToast('保存しました');
     setSaving(false);
+    // Persist in background
+    if (!isDemo) {
+      try { await updateRow({ rowNum, ...updates }); }
+      catch (e) { showToast('同期エラー: ' + e.message, true); loadData(); }
+    }
   };
 
   const handleAdd = async (newData) => {
     setSaving(true);
-    try {
-      if (isDemo) {
-        setRows(prev => [...prev, { rowNum: prev.length + 2, ...newData }]);
-        setCurrentIdx(rows.length);
-      } else {
-        await addRow(newData);
-        await loadData();
-      }
-      showToast('追加しました');
-      navigate('home');
-    } catch (e) { showToast('エラー: ' + e.message, true); }
+    // Optimistic update
+    const tempRowNum = rows.length > 0 ? Math.max(...rows.map(r => r.rowNum)) + 1 : 2;
+    setRows(prev => [...prev, { rowNum: tempRowNum, ...newData }]);
+    setCurrentIdx(rows.length);
+    showToast('追加しました');
+    navigate('home');
     setSaving(false);
+    // Persist & sync real rowNum
+    if (!isDemo) {
+      try { await addRow(newData); loadData(); }
+      catch (e) { showToast('同期エラー: ' + e.message, true); loadData(); }
+    }
   };
 
   if (!loaded) return <div className="loading"><div className="spinner" /><span className="loading-text">Loading...</span></div>;
@@ -310,6 +318,7 @@ export default function Home() {
           row={row} rows={rows} labels={customLabels} catConfig={catConfig} groups={groups}
           onSave={handleSave} onAdd={handleAdd} saving={saving}
           onSettings={openSettings}
+          onNewCategory={() => openNewCatModal('expense')}
         />
       )}
       {view === 'forecast' && <ForecastView rows={rows} labels={customLabels} />}
@@ -323,7 +332,23 @@ export default function Home() {
           labels={customLabels} onUpdate={updateLabel}
           groups={groups} onUpdateGroups={updateGroups} onResetGroups={resetGroups}
           catConfig={catConfig} catActions={catActions}
+          onNewCategory={(type) => openNewCatModal(type)}
           onClose={closeSettingsWithBack}
+        />
+      )}
+
+      {newCatModal && (
+        <NewCategoryModal
+          type={newCatModal}
+          groups={groups} labels={customLabels} catConfig={catConfig}
+          onAdd={(key, name, groupId) => {
+            updateLabel(key, name);
+            catActions.show(newCatModal, key);
+            if (groupId) {
+              updateGroups(groups.map(g => g.id === groupId ? { ...g, keys: [...g.keys, key] } : g));
+            }
+          }}
+          onClose={closeNewCatModalWithBack}
         />
       )}
 
@@ -608,7 +633,7 @@ function HistoryView({ rows, onSelect }) {
 }
 
 // ── Input View ──
-function InputView({ row, rows, labels, catConfig, groups, onSave, onAdd, saving, onSettings }) {
+function InputView({ row, rows, labels, catConfig, groups, onSave, onAdd, saving, onSettings, onNewCategory }) {
   const initial = row || {};
   const [form, setForm] = useState(() => buildForm(initial));
   const [openGroups, setOpenGroups] = useState(() => {
@@ -712,6 +737,15 @@ function InputView({ row, rows, labels, catConfig, groups, onSave, onAdd, saving
               </div>
             ))}
           </div>
+        )}
+
+        {catConfig.expense.length < EXPENSE_KEYS.length && (
+          <button className="cat-add-btn" style={{ marginBottom: 12 }} onClick={onNewCategory}>
+            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            カテゴリを追加
+          </button>
         )}
 
         <div className="section-title">Balance & Notes</div>
@@ -971,6 +1005,96 @@ function EditModal({ item, onSave, onClose, saving }) {
   );
 }
 
+// ── New Category Modal ──
+function NewCategoryModal({ type, groups, labels, catConfig, onAdd, onClose }) {
+  const allKeys = type === 'income' ? INCOME_KEYS : EXPENSE_KEYS;
+  const allLabels = type === 'income' ? INCOME_LABELS : EXPENSE_LABELS;
+  const visible = type === 'income' ? catConfig.income : catConfig.expense;
+  const hiddenKeys = allKeys.filter(k => !visible.includes(k));
+
+  const [name, setName] = useState('');
+  const [selectedKey, setSelectedKey] = useState(hiddenKeys[0] || '');
+  const [groupId, setGroupId] = useState('');
+
+  if (hiddenKeys.length === 0) {
+    return (
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <div className="modal-title">カテゴリ追加</div>
+            <button className="modal-close" onClick={onClose}>x</button>
+          </div>
+          <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+            利用可能な全{allKeys.length}カテゴリが表示済みです。<br />
+            不要なカテゴリを非表示にすると、新規追加枠が空きます。
+          </div>
+          <button className="btn btn-secondary" onClick={onClose}>閉じる</button>
+        </div>
+      </div>
+    );
+  }
+
+  const handleAdd = () => {
+    if (!selectedKey) return;
+    haptic.success();
+    onAdd(selectedKey, name.trim() || allLabels[selectedKey], groupId || null);
+    onClose();
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title">新規カテゴリ追加</div>
+          <button className="modal-close" onClick={onClose}>x</button>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">カテゴリ名</label>
+          <input className="form-input" placeholder="例: 医療費, 教育費..."
+            value={name} onChange={e => setName(e.target.value)}
+            autoFocus />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">データ枠（{hiddenKeys.length}枠 空き）</label>
+          <div className="new-cat-slots">
+            {hiddenKeys.map(k => (
+              <button key={k}
+                className={`new-cat-slot ${selectedKey === k ? 'active' : ''}`}
+                onClick={() => { haptic.tick(); setSelectedKey(k); if (!name) setName(allLabels[k]); }}>
+                {labels[k] || allLabels[k]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {type === 'expense' && groups.length > 0 && (
+          <div className="form-group">
+            <label className="form-label">グループ（任意）</label>
+            <div className="new-cat-slots">
+              <button className={`new-cat-slot ${groupId === '' ? 'active' : ''}`}
+                onClick={() => { haptic.tick(); setGroupId(''); }}>なし</button>
+              {groups.map(g => (
+                <button key={g.id}
+                  className={`new-cat-slot ${groupId === g.id ? 'active' : ''}`}
+                  onClick={() => { haptic.tick(); setGroupId(g.id); }}>
+                  {g.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+          <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>キャンセル</button>
+          <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAdd}>追加する</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Drag & Drop Reorder List ──
 function DragList({ items, onReorder, renderItem }) {
   const [dragIdx, setDragIdx] = useState(null);
@@ -1113,7 +1237,7 @@ function DragList({ items, onReorder, renderItem }) {
 }
 
 // ── Settings Modal ──
-function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups, catConfig, catActions, onClose }) {
+function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups, catConfig, catActions, onNewCategory, onClose }) {
   const [tab, setTab] = useState('categories');
   const [editingGroup, setEditingGroup] = useState(null);
   const [newGroupName, setNewGroupName] = useState('');
@@ -1232,6 +1356,14 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
             <div style={{ marginBottom: 16 }}>
               <div className="section-title">Income</div>
               {renderIncomeList()}
+              {hiddenIncome.length > 0 && (
+                <button className="new-cat-btn" style={{ marginTop: 8 }} onClick={() => onNewCategory('income')}>
+                  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  新規カテゴリを追加
+                </button>
+              )}
             </div>
 
             <div className="section-title">Expenses</div>
@@ -1345,27 +1477,13 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
               );
             })()}
 
-            {hiddenExpense.length > 0 && !groups.some(g => showAddPicker === g.id) && (
-              <div style={{ marginTop: 8 }}>
-                {showAddPicker === 'expense_global' ? (
-                  <div className="cat-add-picker">
-                    {hiddenExpense.map(k => (
-                      <button key={k} className="cat-add-chip"
-                        onClick={() => { haptic.light(); catActions.show('expense', k); if (hiddenExpense.length <= 1) setShowAddPicker(null); }}>
-                        + {labels[k] || EXPENSE_LABELS[k]}
-                      </button>
-                    ))}
-                    <button className="cat-add-chip cat-add-chip-cancel" onClick={() => setShowAddPicker(null)}>キャンセル</button>
-                  </div>
-                ) : (
-                  <button className="cat-add-btn" onClick={() => setShowAddPicker('expense_global')}>
-                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                    </svg>
-                    非表示カテゴリを復元 ({hiddenExpense.length})
-                  </button>
-                )}
-              </div>
+            {hiddenExpense.length > 0 && (
+              <button className="new-cat-btn" style={{ marginTop: 10 }} onClick={() => onNewCategory('expense')}>
+                <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                新規カテゴリを追加（空き{hiddenExpense.length}枠）
+              </button>
             )}
 
             <button className="btn btn-secondary" style={{ fontSize: 12, padding: '10px', marginTop: 16 }}

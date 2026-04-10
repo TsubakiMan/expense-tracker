@@ -1454,6 +1454,60 @@ html, body {
 
 .cat-add-chip-cancel:hover { background: var(--bg-secondary); color: var(--text); }
 
+/* ── New Category ── */
+
+.new-cat-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.new-cat-btn:hover { background: var(--accent); color: #fff; }
+.new-cat-btn:hover svg { stroke: #fff; }
+.new-cat-btn:active { transform: scale(0.97); }
+
+.new-cat-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.new-cat-slot {
+  padding: 6px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-card);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.new-cat-slot.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.new-cat-slot:not(.active):hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* ── Utility ── */
 
 .fade-in { animation: fadeIn 0.4s ease; }
