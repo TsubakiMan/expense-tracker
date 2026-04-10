@@ -739,14 +739,12 @@ function InputView({ row, rows, labels, catConfig, groups, onSave, onAdd, saving
           </div>
         )}
 
-        {catConfig.expense.length < EXPENSE_KEYS.length && (
-          <button className="cat-add-btn" style={{ marginBottom: 12 }} onClick={onNewCategory}>
-            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            カテゴリを追加
-          </button>
-        )}
+        <button className="new-cat-btn" style={{ marginBottom: 12 }} onClick={onNewCategory}>
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          新規カテゴリを追加
+        </button>
 
         <div className="section-title">Balance & Notes</div>
         <div className="form-card">
@@ -1024,11 +1022,21 @@ function NewCategoryModal({ type, groups, labels, catConfig, onAdd, onClose }) {
             <div className="modal-title">カテゴリ追加</div>
             <button className="modal-close" onClick={onClose}>x</button>
           </div>
-          <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-            利用可能な全{allKeys.length}カテゴリが表示済みです。<br />
-            不要なカテゴリを非表示にすると、新規追加枠が空きます。
+          <div style={{ padding: '16px 0', color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.7 }}>
+            全{allKeys.length}枠が使用中です。<br />
+            新しいカテゴリを作るには、使わないカテゴリを設定画面の <strong>カテゴリ</strong> タブで
+            <span style={{ color: 'var(--danger)' }}> × </span>
+            で非表示にしてください。空いた枠に新カテゴリを割り当てられます。
           </div>
-          <button className="btn btn-secondary" onClick={onClose}>閉じる</button>
+          <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius-xs)', padding: 12, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8 }}>現在の{type === 'income' ? '収入' : '支出'}カテゴリ:</div>
+            <div className="new-cat-slots">
+              {visible.map(k => (
+                <span key={k} className="new-cat-slot" style={{ cursor: 'default' }}>{labels[k] || allLabels[k]}</span>
+              ))}
+            </div>
+          </div>
+          <button className="btn btn-primary" onClick={onClose}>閉じる</button>
         </div>
       </div>
     );
@@ -1356,14 +1364,12 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
             <div style={{ marginBottom: 16 }}>
               <div className="section-title">Income</div>
               {renderIncomeList()}
-              {hiddenIncome.length > 0 && (
-                <button className="new-cat-btn" style={{ marginTop: 8 }} onClick={() => onNewCategory('income')}>
-                  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                  </svg>
-                  新規カテゴリを追加
-                </button>
-              )}
+              <button className="new-cat-btn" style={{ marginTop: 8 }} onClick={() => onNewCategory('income')}>
+                <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                新規カテゴリを追加
+              </button>
             </div>
 
             <div className="section-title">Expenses</div>
@@ -1477,14 +1483,12 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
               );
             })()}
 
-            {hiddenExpense.length > 0 && (
-              <button className="new-cat-btn" style={{ marginTop: 10 }} onClick={() => onNewCategory('expense')}>
-                <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                新規カテゴリを追加（空き{hiddenExpense.length}枠）
-              </button>
-            )}
+            <button className="new-cat-btn" style={{ marginTop: 10 }} onClick={() => onNewCategory('expense')}>
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              新規カテゴリを追加{hiddenExpense.length > 0 ? `（空き${hiddenExpense.length}枠）` : ''}
+            </button>
 
             <button className="btn btn-secondary" style={{ fontSize: 12, padding: '10px', marginTop: 16 }}
               onClick={() => { catActions.reset(); setShowAddPicker(null); }}>
