@@ -9,6 +9,16 @@ import {
 } from '../lib/utils';
 import { ExpenseDonut, ProjectionChart, SurplusBar, CHART_COLORS } from '../components/Charts';
 
+// ── Haptic Feedback ──
+const haptic = {
+  light:  () => { try { navigator?.vibrate?.(10); } catch {} },
+  medium: () => { try { navigator?.vibrate?.(18); } catch {} },
+  heavy:  () => { try { navigator?.vibrate?.(30); } catch {} },
+  success:() => { try { navigator?.vibrate?.([12, 60, 12]); } catch {} },
+  error:  () => { try { navigator?.vibrate?.([30, 50, 30, 50, 30]); } catch {} },
+  tick:   () => { try { navigator?.vibrate?.(6); } catch {} },
+};
+
 // ── Demo Data ──
 const DEMO_ROWS = [
   { rowNum:2, date:'2025-11', salary:220000, sideIncome:0, otherIncome:0, rent:43270, food:42000, electric:4200, gas:3500, water:3200, phone:5350, subscription:3980, transport:6000, daily:2800, insurance:5000, loan:15000, hobby:5000, beauty:0, otherExpense:2000, extraExpense:0, balanceHokyo:385000, balanceRakuten:290000, notes:'' },
@@ -178,7 +188,11 @@ export default function Home() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2500); };
+  const showToast = (msg, isError) => {
+    setToast(msg);
+    isError ? haptic.error() : haptic.success();
+    setTimeout(() => setToast(''), 2500);
+  };
 
   const handleSave = async (rowNum, updates) => {
     setSaving(true);
@@ -191,7 +205,7 @@ export default function Home() {
       }
       showToast('保存しました');
       setEditModal(null);
-    } catch (e) { showToast('エラー: ' + e.message); }
+    } catch (e) { showToast('エラー: ' + e.message, true); }
     setSaving(false);
   };
 
@@ -207,15 +221,15 @@ export default function Home() {
       }
       showToast('追加しました');
       setView('home');
-    } catch (e) { showToast('エラー: ' + e.message); }
+    } catch (e) { showToast('エラー: ' + e.message, true); }
     setSaving(false);
   };
 
   if (!loaded) return <div className="loading"><div className="spinner" /><span className="loading-text">Loading...</span></div>;
 
   const row = rows[currentIdx];
-  const prevMonth = () => setCurrentIdx(i => Math.max(0, i - 1));
-  const nextMonth = () => setCurrentIdx(i => Math.min(rows.length - 1, i + 1));
+  const prevMonth = () => { haptic.light(); setCurrentIdx(i => Math.max(0, i - 1)); };
+  const nextMonth = () => { haptic.light(); setCurrentIdx(i => Math.min(rows.length - 1, i + 1)); };
 
   return (
     <div className="app">
@@ -225,19 +239,19 @@ export default function Home() {
         <HomeView
           row={row} rows={rows} labels={customLabels} groups={groups} catConfig={catConfig}
           currentIdx={currentIdx} prevMonth={prevMonth} nextMonth={nextMonth}
-          onEdit={(item) => setEditModal(item)}
-          onSettings={() => setShowSettings(true)}
+          onEdit={(item) => { haptic.medium(); setEditModal(item); }}
+          onSettings={() => { haptic.light(); setShowSettings(true); }}
           onGoInput={() => setView('input')}
         />
       )}
       {view === 'history' && (
-        <HistoryView rows={rows} onSelect={(idx) => { setCurrentIdx(idx); setView('home'); }} />
+        <HistoryView rows={rows} onSelect={(idx) => { haptic.light(); setCurrentIdx(idx); setView('home'); }} />
       )}
       {view === 'input' && (
         <InputView
           row={row} rows={rows} labels={customLabels} catConfig={catConfig}
           onSave={handleSave} onAdd={handleAdd} saving={saving}
-          onSettings={() => setShowSettings(true)}
+          onSettings={() => { haptic.light(); setShowSettings(true); }}
         />
       )}
       {view === 'forecast' && <ForecastView rows={rows} labels={customLabels} />}
@@ -264,7 +278,7 @@ export default function Home() {
           { id:'input', label:'入力', d:'M12 4v16m8-8H4' },
           { id:'forecast', label:'予測', d:'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
         ].map(n => (
-          <button key={n.id} className={`nav-item ${view === n.id ? 'active' : ''}`} onClick={() => setView(n.id)}>
+          <button key={n.id} className={`nav-item ${view === n.id ? 'active' : ''}`} onClick={() => { haptic.light(); setView(n.id); }}>
             <svg className="nav-icon" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d={n.d} />
             </svg>
@@ -282,7 +296,7 @@ function HomeView({ row, rows, labels, groups, catConfig, currentIdx, prevMonth,
   const visibleExpense = new Set(catConfig.expense);
   const visibleIncome = new Set(catConfig.income);
 
-  const toggleGroup = (id) => setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
+  const toggleGroup = (id) => { haptic.light(); setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] })); };
 
   if (!row) {
     return (
@@ -688,7 +702,7 @@ function ForecastView({ rows, labels }) {
           <div className="sim-label-row">
             <span className="sim-label">月収 (Income)</span>
             {incomeChanged && (
-              <button className="sim-reset-inline" onClick={() => setSimIncome(defaultIncome)}>
+              <button className="sim-reset-inline" onClick={() => { haptic.medium(); setSimIncome(defaultIncome); }}>
                 <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M4.49 9A8 8 0 0120 12M19.51 15A8 8 0 014 12" />
                 </svg>
@@ -697,10 +711,10 @@ function ForecastView({ rows, labels }) {
             )}
           </div>
           <div className={`sim-row ${incomeChanged ? 'sim-row-changed' : ''}`}>
-            <button className="sim-btn" onClick={() => setSimIncome(v => Math.max(0, v - 10000))}>-</button>
+            <button className="sim-btn" onClick={() => { haptic.tick(); setSimIncome(v => Math.max(0, v - 10000)); }}>-</button>
             <input className={`sim-input ${incomeChanged ? 'sim-input-changed' : ''}`} type="number" inputMode="numeric"
               value={simIncome} onChange={e => setSimIncome(Number(e.target.value) || 0)} />
-            <button className="sim-btn" onClick={() => setSimIncome(v => v + 10000)}>+</button>
+            <button className="sim-btn" onClick={() => { haptic.tick(); setSimIncome(v => v + 10000); }}>+</button>
           </div>
           {incomeChanged && (
             <div className="sim-diff">
@@ -714,7 +728,7 @@ function ForecastView({ rows, labels }) {
           <div className="sim-label-row" style={{ marginTop: 14 }}>
             <span className="sim-label">月間支出 (Expense)</span>
             {expenseChanged && (
-              <button className="sim-reset-inline" onClick={() => setSimExpense(defaultExpense)}>
+              <button className="sim-reset-inline" onClick={() => { haptic.medium(); setSimExpense(defaultExpense); }}>
                 <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M4.49 9A8 8 0 0120 12M19.51 15A8 8 0 014 12" />
                 </svg>
@@ -723,10 +737,10 @@ function ForecastView({ rows, labels }) {
             )}
           </div>
           <div className={`sim-row ${expenseChanged ? 'sim-row-changed' : ''}`}>
-            <button className="sim-btn" onClick={() => setSimExpense(v => Math.max(0, v - 10000))}>-</button>
+            <button className="sim-btn" onClick={() => { haptic.tick(); setSimExpense(v => Math.max(0, v - 10000)); }}>-</button>
             <input className={`sim-input ${expenseChanged ? 'sim-input-changed' : ''}`} type="number" inputMode="numeric"
               value={simExpense} onChange={e => setSimExpense(Number(e.target.value) || 0)} />
-            <button className="sim-btn" onClick={() => setSimExpense(v => v + 10000)}>+</button>
+            <button className="sim-btn" onClick={() => { haptic.tick(); setSimExpense(v => v + 10000); }}>+</button>
           </div>
           {expenseChanged && (
             <div className="sim-diff">
@@ -738,7 +752,7 @@ function ForecastView({ rows, labels }) {
           )}
 
           {isChanged && (
-            <button className="sim-reset-all" onClick={() => { setSimIncome(defaultIncome); setSimExpense(defaultExpense); }}>
+            <button className="sim-reset-all" onClick={() => { haptic.medium(); setSimIncome(defaultIncome); setSimExpense(defaultExpense); }}>
               <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M4.49 9A8 8 0 0120 12M19.51 15A8 8 0 014 12" />
               </svg>
@@ -882,27 +896,40 @@ function DragList({ items, onReorder, renderItem }) {
     });
   };
 
+  const prevOverIdx = useRef(null);
+
   // Touch handlers
   const onTouchStart = (idx, e) => {
     captureRects();
     setDragIdx(idx);
     setOverIdx(idx);
+    prevOverIdx.current = idx;
     dragY.current = e.touches[0].clientY;
+    haptic.medium();
   };
 
   const onTouchMove = useCallback((e) => {
     if (dragIdx === null) return;
     e.preventDefault();
     const y = e.touches[0].clientY;
-    setOverIdx(calcOverIdx(y));
+    const newOver = calcOverIdx(y);
+    setOverIdx(newOver);
+    if (newOver !== prevOverIdx.current) {
+      haptic.tick();
+      prevOverIdx.current = newOver;
+    }
   }, [dragIdx]);
 
   const onTouchEnd = useCallback(() => {
     if (dragIdx !== null && overIdx !== null && dragIdx !== overIdx) {
       onReorder(dragIdx, overIdx);
+      haptic.heavy();
+    } else {
+      haptic.light();
     }
     setDragIdx(null);
     setOverIdx(null);
+    prevOverIdx.current = null;
   }, [dragIdx, overIdx, onReorder]);
 
   useEffect(() => {
@@ -922,19 +949,30 @@ function DragList({ items, onReorder, renderItem }) {
     captureRects();
     setDragIdx(idx);
     setOverIdx(idx);
+    prevOverIdx.current = idx;
+    haptic.medium();
   };
 
   const onMouseMove = useCallback((e) => {
     if (dragIdx === null) return;
-    setOverIdx(calcOverIdx(e.clientY));
+    const newOver = calcOverIdx(e.clientY);
+    setOverIdx(newOver);
+    if (newOver !== prevOverIdx.current) {
+      haptic.tick();
+      prevOverIdx.current = newOver;
+    }
   }, [dragIdx]);
 
   const onMouseUp = useCallback(() => {
     if (dragIdx !== null && overIdx !== null && dragIdx !== overIdx) {
       onReorder(dragIdx, overIdx);
+      haptic.heavy();
+    } else {
+      haptic.light();
     }
     setDragIdx(null);
     setOverIdx(null);
+    prevOverIdx.current = null;
   }, [dragIdx, overIdx, onReorder]);
 
   useEffect(() => {
@@ -984,13 +1022,15 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
   // Group helpers
   const addGroup = () => {
     if (!newGroupName.trim()) return;
+    haptic.success();
     const id = 'g_' + Date.now();
     onUpdateGroups([...groups, { id, name: newGroupName.trim(), keys: [] }]);
     setNewGroupName('');
   };
   const renameGroup = (id, name) => onUpdateGroups(groups.map(g => g.id === id ? { ...g, name } : g));
-  const deleteGroup = (id) => onUpdateGroups(groups.filter(g => g.id !== id));
+  const deleteGroup = (id) => { haptic.medium(); onUpdateGroups(groups.filter(g => g.id !== id)); };
   const toggleKeyInGroup = (groupId, key) => {
+    haptic.light();
     onUpdateGroups(groups.map(g => {
       if (g.id !== groupId) return { ...g, keys: g.keys.filter(k => k !== key) };
       if (g.keys.includes(key)) return { ...g, keys: g.keys.filter(k => k !== key) };
@@ -1017,7 +1057,7 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
             <>
               <input className="cat-item-input" value={labels[k] || allLabels[k] || ''}
                 onChange={e => onUpdate(k, e.target.value)} />
-              <button className="cat-item-delete" onClick={() => catActions.hide(type, k)}>
+              <button className="cat-item-delete" onClick={() => { haptic.medium(); catActions.hide(type, k); }}>
                 <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -1032,7 +1072,7 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
               <div className="cat-add-picker">
                 {hidden.map(k => (
                   <button key={k} className="cat-add-chip"
-                    onClick={() => { catActions.show(type, k); if (hidden.length <= 1) setShowAddPicker(null); }}>
+                    onClick={() => { haptic.light(); catActions.show(type, k); if (hidden.length <= 1) setShowAddPicker(null); }}>
                     + {labels[k] || allLabels[k]}
                   </button>
                 ))}
@@ -1064,9 +1104,9 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
 
         <div className="settings-tabs">
           <button className={`settings-tab ${tab === 'categories' ? 'active' : ''}`}
-            onClick={() => setTab('categories')}>カテゴリ</button>
+            onClick={() => { haptic.light(); setTab('categories'); }}>カテゴリ</button>
           <button className={`settings-tab ${tab === 'groups' ? 'active' : ''}`}
-            onClick={() => setTab('groups')}>グループ</button>
+            onClick={() => { haptic.light(); setTab('groups'); }}>グループ</button>
         </div>
 
         {tab === 'categories' && (
