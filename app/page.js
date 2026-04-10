@@ -6,6 +6,7 @@ import {
   formatYen, formatMonth, formatShortMonth, currentMonth, addMonths,
   totalIncome, totalExpense, surplus,
   INCOME_KEYS, EXPENSE_KEYS, INCOME_LABELS, EXPENSE_LABELS,
+  BUILTIN_KEYS, MAX_CATEGORIES, isCustomKey,
 } from '../lib/utils';
 import { ExpenseDonut, ProjectionChart, SurplusBar, CHART_COLORS } from '../components/Charts';
 
@@ -51,8 +52,56 @@ function useCustomLabels() {
   return [labels, updateLabel];
 }
 
+// ── Custom Categories Hook (localStorage-backed definitions for cx_*, ci_* keys) ──
+function useCustomCategories() {
+  const [cats, setCats] = useState([]);
+  // cats: [{ key: 'cx_1', label: '医療費', type: 'expense' }, ...]
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('customCategories');
+      if (saved) setCats(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  const saveCats = (next) => {
+    setCats(next);
+    try { localStorage.setItem('customCategories', JSON.stringify(next)); } catch {};
+  };
+
+  const nextKey = (type) => {
+    const prefix = type === 'income' ? 'ci_' : 'cx_';
+    const existing = cats.filter(c => c.key.startsWith(prefix)).map(c => parseInt(c.key.split('_')[1]));
+    const next = existing.length > 0 ? Math.max(...existing) + 1 : 1;
+    return prefix + next;
+  };
+
+  const add = (label, type) => {
+    const key = nextKey(type);
+    saveCats([...cats, { key, label, type }]);
+    return key;
+  };
+
+  const remove = (key) => {
+    saveCats(cats.filter(c => c.key !== key));
+  };
+
+  const rename = (key, label) => {
+    saveCats(cats.map(c => c.key === key ? { ...c, label } : c));
+  };
+
+  const customExpenseKeys = cats.filter(c => c.type === 'expense').map(c => c.key);
+  const customIncomeKeys = cats.filter(c => c.type === 'income').map(c => c.key);
+  const customLabelsMap = Object.fromEntries(cats.map(c => [c.key, c.label]));
+
+  const totalCount = INCOME_KEYS.length + EXPENSE_KEYS.length + cats.length;
+  const canAdd = totalCount < MAX_CATEGORIES;
+
+  return { cats, add, remove, rename, customExpenseKeys, customIncomeKeys, customLabelsMap, canAdd, totalCount };
+}
+
 // ── Category Order & Visibility Hook ──
-function useCategoryConfig() {
+function useCategoryConfig(customExpenseKeys, customIncomeKeys) {
   const [config, setConfig] = useState({
     income: [...INCOME_KEYS],
     expense: [...EXPENSE_KEYS],
@@ -63,14 +112,36 @@ function useCategoryConfig() {
       const saved = localStorage.getItem('categoryConfig');
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Ensure no stale keys that don't exist anymore
+        const validIncome = new Set([...INCOME_KEYS, ...customIncomeKeys]);
+        const validExpense = new Set([...EXPENSE_KEYS, ...customExpenseKeys]);
         setConfig({
-          income: (parsed.income || []).filter(k => INCOME_KEYS.includes(k)),
-          expense: (parsed.expense || []).filter(k => EXPENSE_KEYS.includes(k)),
+          income: (parsed.income || []).filter(k => validIncome.has(k)),
+          expense: (parsed.expense || []).filter(k => validExpense.has(k)),
         });
       }
     } catch {}
-  }, []);
+  }, [customExpenseKeys.length, customIncomeKeys.length]);
+
+  // Ensure newly added custom keys appear in config
+  useEffect(() => {
+    setConfig(prev => {
+      let changed = false;
+      const incomeSet = new Set(prev.income);
+      const expenseSet = new Set(prev.expense);
+      const newIncome = [...prev.income];
+      const newExpense = [...prev.expense];
+      for (const k of customIncomeKeys) {
+        if (!incomeSet.has(k)) { newIncome.push(k); changed = true; }
+      }
+      for (const k of customExpenseKeys) {
+        if (!expenseSet.has(k)) { newExpense.push(k); changed = true; }
+      }
+      if (!changed) return prev;
+      const next = { income: newIncome, expense: newExpense };
+      try { localStorage.setItem('categoryConfig', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, [customExpenseKeys.length, customIncomeKeys.length]);
 
   const save = (next) => {
     setConfig(next);
@@ -93,7 +164,10 @@ function useCategoryConfig() {
   };
 
   const reset = () => {
-    save({ income: [...INCOME_KEYS], expense: [...EXPENSE_KEYS] });
+    save({
+      income: [...INCOME_KEYS, ...customIncomeKeys],
+      expense: [...EXPENSE_KEYS, ...customExpenseKeys],
+    });
   };
 
   return [config, { reorder, hide, show, reset }];
@@ -168,8 +242,14 @@ export default function Home() {
   const [loaded, setLoaded] = useState(false);
   const [customLabels, updateLabel] = useCustomLabels();
   const [groups, updateGroups, resetGroups] = useGroups();
-  const [catConfig, catActions] = useCategoryConfig();
+  const customCats = useCustomCategories();
+  const [catConfig, catActions] = useCategoryConfig(customCats.customExpenseKeys, customCats.customIncomeKeys);
   const [newCatModal, setNewCatModal] = useState(null); // 'income' | 'expense' | null
+
+  // Merged labels: built-in labels + custom labels + user overrides
+  const allLabels = useMemo(() => ({
+    ...EXPENSE_LABELS, ...INCOME_LABELS, ...customCats.customLabelsMap, ...customLabels
+  }), [customLabels, customCats.customLabelsMap]);
 
   // ── History-based navigation ──
   const isPopping = useRef(false);
@@ -303,7 +383,8 @@ export default function Home() {
 
       {view === 'home' && (
         <HomeView
-          row={row} rows={rows} labels={customLabels} groups={groups} catConfig={catConfig}
+          row={row} rows={rows} labels={allLabels} groups={groups} catConfig={catConfig}
+          customExpenseKeys={customCats.customExpenseKeys} customIncomeKeys={customCats.customIncomeKeys}
           currentIdx={currentIdx} prevMonth={prevMonth} nextMonth={nextMonth}
           onEdit={openEditModal}
           onSettings={openSettings}
@@ -311,17 +392,20 @@ export default function Home() {
         />
       )}
       {view === 'history' && (
-        <HistoryView rows={rows} onSelect={(idx) => { haptic.light(); setCurrentIdx(idx); navigate('home'); }} />
+        <HistoryView rows={rows} onSelect={(idx) => { haptic.light(); setCurrentIdx(idx); navigate('home'); }}
+          customExpenseKeys={customCats.customExpenseKeys} customIncomeKeys={customCats.customIncomeKeys} />
       )}
       {view === 'input' && (
         <InputView
-          row={row} rows={rows} labels={customLabels} catConfig={catConfig} groups={groups}
+          row={row} rows={rows} labels={allLabels} catConfig={catConfig} groups={groups}
+          customExpenseKeys={customCats.customExpenseKeys} customIncomeKeys={customCats.customIncomeKeys}
           onSave={handleSave} onAdd={handleAdd} saving={saving}
           onSettings={openSettings}
           onNewCategory={() => openNewCatModal('expense')}
         />
       )}
-      {view === 'forecast' && <ForecastView rows={rows} labels={customLabels} />}
+      {view === 'forecast' && <ForecastView rows={rows} labels={allLabels}
+        customExpenseKeys={customCats.customExpenseKeys} customIncomeKeys={customCats.customIncomeKeys} />}
 
       {editModal && (
         <EditModal item={editModal} onSave={handleSave} onClose={closeEditModalWithBack} saving={saving} />
@@ -329,9 +413,10 @@ export default function Home() {
 
       {showSettings && (
         <SettingsModal
-          labels={customLabels} onUpdate={updateLabel}
+          labels={allLabels} onUpdate={updateLabel}
           groups={groups} onUpdateGroups={updateGroups} onResetGroups={resetGroups}
           catConfig={catConfig} catActions={catActions}
+          customCats={customCats}
           onNewCategory={(type) => openNewCatModal(type)}
           onClose={closeSettingsWithBack}
         />
@@ -340,7 +425,8 @@ export default function Home() {
       {newCatModal && (
         <NewCategoryModal
           type={newCatModal}
-          groups={groups} labels={customLabels} catConfig={catConfig}
+          groups={groups} labels={allLabels} catConfig={catConfig}
+          customCats={customCats}
           onAdd={(key, name, groupId) => {
             updateLabel(key, name);
             catActions.show(newCatModal, key);
@@ -374,7 +460,7 @@ export default function Home() {
 }
 
 // ── Home View ──
-function HomeView({ row, rows, labels, groups, catConfig, currentIdx, prevMonth, nextMonth, onEdit, onSettings, onGoInput }) {
+function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, customIncomeKeys, currentIdx, prevMonth, nextMonth, onEdit, onSettings, onGoInput }) {
   const [expandedGroups, setExpandedGroups] = useState({});
   const visibleExpense = new Set(catConfig.expense);
   const visibleIncome = new Set(catConfig.income);
@@ -401,20 +487,20 @@ function HomeView({ row, rows, labels, groups, catConfig, currentIdx, prevMonth,
     );
   }
 
-  const inc = totalIncome(row);
-  const exp = totalExpense(row);
-  const sur = surplus(row);
+  const inc = totalIncome(row, customIncomeKeys);
+  const exp = totalExpense(row, customExpenseKeys);
+  const sur = surplus(row, customExpenseKeys, customIncomeKeys);
 
   // Build grouped data (only visible keys)
   const groupedKeys = new Set(groups.flatMap(g => g.keys));
   const ungroupedItems = catConfig.expense
     .filter(k => !groupedKeys.has(k) && (row[k] || 0) > 0)
-    .map(k => ({ key: k, label: labels[k] || EXPENSE_LABELS[k], amount: row[k] || 0 }));
+    .map(k => ({ key: k, label: labels[k] || k, amount: row[k] || 0 }));
 
   const groupData = groups.map((g, gi) => {
     const children = g.keys
       .filter(k => visibleExpense.has(k))
-      .map(k => ({ key: k, label: labels[k] || EXPENSE_LABELS[k], amount: row[k] || 0 }))
+      .map(k => ({ key: k, label: labels[k] || k, amount: row[k] || 0 }))
       .filter(c => c.amount > 0);
     const total = children.reduce((s, c) => s + c.amount, 0);
     return { ...g, children, total, colorIdx: gi };
@@ -476,7 +562,7 @@ function HomeView({ row, rows, labels, groups, catConfig, currentIdx, prevMonth,
             if (v === 0) return null;
             return (
               <div key={k} className="stat-row">
-                <span className="stat-label">{labels[k] || INCOME_LABELS[k]}</span>
+                <span className="stat-label">{labels[k] || INCOME_LABELS[k] || k}</span>
                 <span className="stat-value income">{formatYen(v)}</span>
               </div>
             );
@@ -601,7 +687,7 @@ function Header({ onSettings }) {
 }
 
 // ── History View ──
-function HistoryView({ rows, onSelect }) {
+function HistoryView({ rows, onSelect, customExpenseKeys = [], customIncomeKeys = [] }) {
   return (
     <div className="fade-in">
       <div className="header"><div className="header-top"><span className="header-brand">Money Flow</span></div></div>
@@ -614,12 +700,12 @@ function HistoryView({ rows, onSelect }) {
         )}
         {[...rows].reverse().map((row, _i) => {
           const idx = rows.length - 1 - _i;
-          const sur = surplus(row);
+          const sur = surplus(row, customExpenseKeys, customIncomeKeys);
           return (
             <div key={row.rowNum} className="history-item" onClick={() => onSelect(idx)}>
               <div>
                 <div className="history-month">{formatMonth(row.date)}</div>
-                <div className="history-sub">{formatYen(totalIncome(row))} / {formatYen(totalExpense(row))}</div>
+                <div className="history-sub">{formatYen(totalIncome(row, customIncomeKeys))} / {formatYen(totalExpense(row, customExpenseKeys))}</div>
               </div>
               <div className={`history-surplus ${sur >= 0 ? 'text-success' : 'text-danger'}`}>
                 {sur >= 0 ? '+' : ''}{formatYen(sur)}
@@ -633,8 +719,22 @@ function HistoryView({ rows, onSelect }) {
 }
 
 // ── Input View ──
-function InputView({ row, rows, labels, catConfig, groups, onSave, onAdd, saving, onSettings, onNewCategory }) {
+function InputView({ row, rows, labels, catConfig, groups, customExpenseKeys, customIncomeKeys, onSave, onAdd, saving, onSettings, onNewCategory }) {
   const initial = row || {};
+  const allIncomeKeys = [...INCOME_KEYS, ...customIncomeKeys];
+  const allExpenseKeys = [...EXPENSE_KEYS, ...customExpenseKeys];
+
+  function buildForm(src) {
+    return {
+      date: src.date || currentMonth(),
+      ...Object.fromEntries(allIncomeKeys.map(k => [k, src[k] || 0])),
+      ...Object.fromEntries(allExpenseKeys.map(k => [k, src[k] || 0])),
+      balanceHokyo: src.balanceHokyo || 0,
+      balanceRakuten: src.balanceRakuten || 0,
+      notes: src.notes || '',
+    };
+  }
+
   const [form, setForm] = useState(() => buildForm(initial));
   const [openGroups, setOpenGroups] = useState(() => {
     const init = {};
@@ -643,17 +743,6 @@ function InputView({ row, rows, labels, catConfig, groups, onSave, onAdd, saving
   });
 
   useEffect(() => { if (row) setForm(buildForm(row)); }, [row]);
-
-  function buildForm(src) {
-    return {
-      date: src.date || currentMonth(),
-      ...Object.fromEntries(INCOME_KEYS.map(k => [k, src[k] || 0])),
-      ...Object.fromEntries(EXPENSE_KEYS.map(k => [k, src[k] || 0])),
-      balanceHokyo: src.balanceHokyo || 0,
-      balanceRakuten: src.balanceRakuten || 0,
-      notes: src.notes || '',
-    };
-  }
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
   const toggleInputGroup = (id) => { haptic.light(); setOpenGroups(prev => ({ ...prev, [id]: !prev[id] })); };
@@ -692,7 +781,7 @@ function InputView({ row, rows, labels, catConfig, groups, onSave, onAdd, saving
         <div className="form-card">
           {catConfig.income.map(k => (
             <div key={k} className="form-group">
-              <label className="form-label">{labels[k] || INCOME_LABELS[k]}</label>
+              <label className="form-label">{labels[k] || INCOME_LABELS[k] || k}</label>
               <NumInput value={form[k]} onChange={v => set(k, v)} />
             </div>
           ))}
@@ -720,7 +809,7 @@ function InputView({ row, rows, labels, catConfig, groups, onSave, onAdd, saving
               </div>
               {isOpen && gKeys.map(k => (
                 <div key={k} className="form-group">
-                  <label className="form-label">{labels[k] || EXPENSE_LABELS[k]}</label>
+                  <label className="form-label">{labels[k] || EXPENSE_LABELS[k] || k}</label>
                   <NumInput value={form[k]} onChange={v => set(k, v)} />
                 </div>
               ))}
@@ -732,7 +821,7 @@ function InputView({ row, rows, labels, catConfig, groups, onSave, onAdd, saving
           <div className="form-card">
             {ungroupedKeys.map(k => (
               <div key={k} className="form-group">
-                <label className="form-label">{labels[k] || EXPENSE_LABELS[k]}</label>
+                <label className="form-label">{labels[k] || EXPENSE_LABELS[k] || k}</label>
                 <NumInput value={form[k]} onChange={v => set(k, v)} />
               </div>
             ))}
@@ -772,12 +861,12 @@ function InputView({ row, rows, labels, catConfig, groups, onSave, onAdd, saving
 }
 
 // ── Forecast View ──
-function ForecastView({ rows, labels }) {
+function ForecastView({ rows, labels, customExpenseKeys = [], customIncomeKeys = [] }) {
   const recent = rows.slice(-3);
   const defaultIncome = recent.length > 0
-    ? Math.round(recent.reduce((s, r) => s + totalIncome(r), 0) / recent.length) : 200000;
+    ? Math.round(recent.reduce((s, r) => s + totalIncome(r, customIncomeKeys), 0) / recent.length) : 200000;
   const defaultExpense = recent.length > 0
-    ? Math.round(recent.reduce((s, r) => s + totalExpense(r), 0) / recent.length) : 150000;
+    ? Math.round(recent.reduce((s, r) => s + totalExpense(r, customExpenseKeys), 0) / recent.length) : 150000;
 
   const [simIncome, setSimIncome] = useState(defaultIncome);
   const [simExpense, setSimExpense] = useState(defaultExpense);
@@ -821,7 +910,7 @@ function ForecastView({ rows, labels }) {
   const savingsRate = simIncome > 0 ? Math.round((monthlySurplus / simIncome) * 100) : 0;
 
   const histLabels = rows.map(r => formatShortMonth(r.date));
-  const histData = rows.map(r => surplus(r));
+  const histData = rows.map(r => surplus(r, customExpenseKeys, customIncomeKeys));
 
   return (
     <div className="fade-in">
@@ -1004,48 +1093,31 @@ function EditModal({ item, onSave, onClose, saving }) {
 }
 
 // ── New Category Modal ──
-function NewCategoryModal({ type, groups, labels, catConfig, onAdd, onClose }) {
-  const allKeys = type === 'income' ? INCOME_KEYS : EXPENSE_KEYS;
-  const allLabels = type === 'income' ? INCOME_LABELS : EXPENSE_LABELS;
-  const visible = type === 'income' ? catConfig.income : catConfig.expense;
-  const hiddenKeys = allKeys.filter(k => !visible.includes(k));
-
+function NewCategoryModal({ type, groups, labels, catConfig, customCats, onAdd, onClose }) {
   const [name, setName] = useState('');
-  const [selectedKey, setSelectedKey] = useState(hiddenKeys[0] || '');
   const [groupId, setGroupId] = useState('');
+  const [mode, setMode] = useState('new'); // 'new' = create custom key, 'reuse' = unhide built-in
 
-  if (hiddenKeys.length === 0) {
-    return (
-      <div className="modal-overlay" onClick={onClose}>
-        <div className="modal" onClick={e => e.stopPropagation()}>
-          <div className="modal-header">
-            <div className="modal-title">カテゴリ追加</div>
-            <button className="modal-close" onClick={onClose}>x</button>
-          </div>
-          <div style={{ padding: '16px 0', color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.7 }}>
-            全{allKeys.length}枠が使用中です。<br />
-            新しいカテゴリを作るには、使わないカテゴリを設定画面の <strong>カテゴリ</strong> タブで
-            <span style={{ color: 'var(--danger)' }}> × </span>
-            で非表示にしてください。空いた枠に新カテゴリを割り当てられます。
-          </div>
-          <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius-xs)', padding: 12, marginBottom: 16 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8 }}>現在の{type === 'income' ? '収入' : '支出'}カテゴリ:</div>
-            <div className="new-cat-slots">
-              {visible.map(k => (
-                <span key={k} className="new-cat-slot" style={{ cursor: 'default' }}>{labels[k] || allLabels[k]}</span>
-              ))}
-            </div>
-          </div>
-          <button className="btn btn-primary" onClick={onClose}>閉じる</button>
-        </div>
-      </div>
-    );
-  }
+  // Hidden built-in keys
+  const builtinKeys = type === 'income' ? INCOME_KEYS : EXPENSE_KEYS;
+  const visible = type === 'income' ? catConfig.income : catConfig.expense;
+  const hiddenBuiltin = builtinKeys.filter(k => !visible.includes(k));
+  const [selectedBuiltin, setSelectedBuiltin] = useState(hiddenBuiltin[0] || '');
 
-  const handleAdd = () => {
-    if (!selectedKey) return;
+  const canAddNew = customCats.canAdd;
+
+  const handleAddNew = () => {
+    if (!name.trim()) return;
     haptic.success();
-    onAdd(selectedKey, name.trim() || allLabels[selectedKey], groupId || null);
+    const key = customCats.add(name.trim(), type);
+    onAdd(key, name.trim(), groupId || null);
+    onClose();
+  };
+
+  const handleReuse = () => {
+    if (!selectedBuiltin) return;
+    haptic.success();
+    onAdd(selectedBuiltin, name.trim() || labels[selectedBuiltin] || selectedBuiltin, groupId || null);
     onClose();
   };
 
@@ -1057,47 +1129,104 @@ function NewCategoryModal({ type, groups, labels, catConfig, onAdd, onClose }) {
           <button className="modal-close" onClick={onClose}>x</button>
         </div>
 
-        <div className="form-group">
-          <label className="form-label">カテゴリ名</label>
-          <input className="form-input" placeholder="例: 医療費, 教育費..."
-            value={name} onChange={e => setName(e.target.value)}
-            autoFocus />
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+          {customCats.totalCount} / {MAX_CATEGORIES} カテゴリ使用中
         </div>
 
-        <div className="form-group">
-          <label className="form-label">データ枠（{hiddenKeys.length}枠 空き）</label>
-          <div className="new-cat-slots">
-            {hiddenKeys.map(k => (
-              <button key={k}
-                className={`new-cat-slot ${selectedKey === k ? 'active' : ''}`}
-                onClick={() => { haptic.tick(); setSelectedKey(k); if (!name) setName(allLabels[k]); }}>
-                {labels[k] || allLabels[k]}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {type === 'expense' && groups.length > 0 && (
-          <div className="form-group">
-            <label className="form-label">グループ（任意）</label>
-            <div className="new-cat-slots">
-              <button className={`new-cat-slot ${groupId === '' ? 'active' : ''}`}
-                onClick={() => { haptic.tick(); setGroupId(''); }}>なし</button>
-              {groups.map(g => (
-                <button key={g.id}
-                  className={`new-cat-slot ${groupId === g.id ? 'active' : ''}`}
-                  onClick={() => { haptic.tick(); setGroupId(g.id); }}>
-                  {g.name}
-                </button>
-              ))}
-            </div>
+        {hiddenBuiltin.length > 0 && (
+          <div className="settings-tabs" style={{ marginBottom: 14 }}>
+            <button className={`settings-tab ${mode === 'new' ? 'active' : ''}`}
+              onClick={() => { haptic.tick(); setMode('new'); }}>新規作成</button>
+            <button className={`settings-tab ${mode === 'reuse' ? 'active' : ''}`}
+              onClick={() => { haptic.tick(); setMode('reuse'); }}>非表示から復元</button>
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-          <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>キャンセル</button>
-          <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAdd}>追加する</button>
-        </div>
+        {mode === 'new' && (
+          <>
+            {!canAddNew ? (
+              <div style={{ padding: '16px 0', color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.7 }}>
+                カテゴリ上限（{MAX_CATEGORIES}個）に達しています。<br />
+                不要なカテゴリを設定画面から削除してから追加してください。
+              </div>
+            ) : (
+              <>
+                <div className="form-group">
+                  <label className="form-label">カテゴリ名</label>
+                  <input className="form-input" placeholder="例: 医療費, 教育費..."
+                    value={name} onChange={e => setName(e.target.value)} autoFocus />
+                </div>
+
+                {type === 'expense' && groups.length > 0 && (
+                  <div className="form-group">
+                    <label className="form-label">グループ（任意）</label>
+                    <div className="new-cat-slots">
+                      <button className={`new-cat-slot ${groupId === '' ? 'active' : ''}`}
+                        onClick={() => { haptic.tick(); setGroupId(''); }}>なし</button>
+                      {groups.map(g => (
+                        <button key={g.id}
+                          className={`new-cat-slot ${groupId === g.id ? 'active' : ''}`}
+                          onClick={() => { haptic.tick(); setGroupId(g.id); }}>
+                          {g.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+                  <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>キャンセル</button>
+                  <button className="btn btn-primary" style={{ flex: 1 }} disabled={!name.trim()} onClick={handleAddNew}>追加する</button>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {mode === 'reuse' && (
+          <>
+            <div className="form-group">
+              <label className="form-label">復元するカテゴリ（{hiddenBuiltin.length}枠）</label>
+              <div className="new-cat-slots">
+                {hiddenBuiltin.map(k => (
+                  <button key={k}
+                    className={`new-cat-slot ${selectedBuiltin === k ? 'active' : ''}`}
+                    onClick={() => { haptic.tick(); setSelectedBuiltin(k); if (!name) setName(labels[k] || k); }}>
+                    {labels[k] || k}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">表示名（変更可）</label>
+              <input className="form-input" value={name}
+                onChange={e => setName(e.target.value)} />
+            </div>
+
+            {type === 'expense' && groups.length > 0 && (
+              <div className="form-group">
+                <label className="form-label">グループ（任意）</label>
+                <div className="new-cat-slots">
+                  <button className={`new-cat-slot ${groupId === '' ? 'active' : ''}`}
+                    onClick={() => { haptic.tick(); setGroupId(''); }}>なし</button>
+                  {groups.map(g => (
+                    <button key={g.id}
+                      className={`new-cat-slot ${groupId === g.id ? 'active' : ''}`}
+                      onClick={() => { haptic.tick(); setGroupId(g.id); }}>
+                      {g.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>キャンセル</button>
+              <button className="btn btn-primary" style={{ flex: 1 }} disabled={!selectedBuiltin} onClick={handleReuse}>復元する</button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1245,7 +1374,7 @@ function DragList({ items, onReorder, renderItem }) {
 }
 
 // ── Settings Modal ──
-function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups, catConfig, catActions, onNewCategory, onClose }) {
+function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups, catConfig, catActions, customCats, onNewCategory, onClose }) {
   const [tab, setTab] = useState('categories');
   const [editingGroup, setEditingGroup] = useState(null);
   const [newGroupName, setNewGroupName] = useState('');
@@ -1271,9 +1400,10 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
   };
   const assignedKeys = new Set(groups.flatMap(g => g.keys));
 
-  // Hidden categories
+  // Hidden categories (built-in only; custom keys are always visible or deleted entirely)
   const hiddenIncome = INCOME_KEYS.filter(k => !catConfig.income.includes(k));
-  const hiddenExpense = EXPENSE_KEYS.filter(k => !catConfig.expense.includes(k));
+  const allExpenseKeys = [...EXPENSE_KEYS, ...customCats.customExpenseKeys];
+  const hiddenExpense = allExpenseKeys.filter(k => !catConfig.expense.includes(k));
   const [openCatGroups, setOpenCatGroups] = useState(() => {
     const init = {};
     groups.forEach(g => { init[g.id] = true; });
@@ -1292,7 +1422,7 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
           onReorder={(from, to) => catActions.reorder('income', from, to)}
           renderItem={(k) => (
             <>
-              <input className="cat-item-input" value={labels[k] || INCOME_LABELS[k] || ''}
+              <input className="cat-item-input" value={labels[k] || INCOME_LABELS[k] || k || ''}
                 onChange={e => onUpdate(k, e.target.value)} />
               <button className="cat-item-delete" onClick={() => { haptic.medium(); catActions.hide('income', k); }}>
                 <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -1309,7 +1439,7 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
                 {hiddenIncome.map(k => (
                   <button key={k} className="cat-add-chip"
                     onClick={() => { haptic.light(); catActions.show('income', k); if (hiddenIncome.length <= 1) setShowAddPicker(null); }}>
-                    + {labels[k] || INCOME_LABELS[k]}
+                    + {labels[k] || INCOME_LABELS[k] || k}
                   </button>
                 ))}
                 <button className="cat-add-chip cat-add-chip-cancel" onClick={() => setShowAddPicker(null)}>キャンセル</button>
@@ -1405,7 +1535,7 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
                         }}
                         renderItem={(k) => (
                           <>
-                            <input className="cat-item-input" value={labels[k] || EXPENSE_LABELS[k] || ''}
+                            <input className="cat-item-input" value={labels[k] || EXPENSE_LABELS[k] || k || ''}
                               onChange={e => onUpdate(k, e.target.value)} />
                             <button className="cat-item-delete" onClick={() => { haptic.medium(); catActions.hide('expense', k); }}>
                               <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -1422,7 +1552,7 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
                               {addable.map(k => (
                                 <button key={k} className="cat-add-chip"
                                   onClick={() => { addKeyToGroup(g.id, k); if (addable.length <= 1) setShowAddPicker(null); }}>
-                                  + {labels[k] || EXPENSE_LABELS[k]}
+                                  + {labels[k] || EXPENSE_LABELS[k] || k}
                                 </button>
                               ))}
                               <button className="cat-add-chip cat-add-chip-cancel" onClick={() => setShowAddPicker(null)}>キャンセル</button>
@@ -1467,7 +1597,7 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
                         onReorder={(from, to) => catActions.reorder('expense', catConfig.expense.indexOf(ungrouped[from]), catConfig.expense.indexOf(ungrouped[to]))}
                         renderItem={(k) => (
                           <>
-                            <input className="cat-item-input" value={labels[k] || EXPENSE_LABELS[k] || ''}
+                            <input className="cat-item-input" value={labels[k] || EXPENSE_LABELS[k] || k || ''}
                               onChange={e => onUpdate(k, e.target.value)} />
                             <button className="cat-item-delete" onClick={() => { haptic.medium(); catActions.hide('expense', k); }}>
                               <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -1487,7 +1617,7 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
-              新規カテゴリを追加{hiddenExpense.length > 0 ? `（空き${hiddenExpense.length}枠）` : ''}
+              新規カテゴリを追加（{customCats.totalCount}/{MAX_CATEGORIES}）
             </button>
 
             <button className="btn btn-secondary" style={{ fontSize: 12, padding: '10px', marginTop: 16 }}
@@ -1526,7 +1656,7 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
                   </button>
                 </div>
                 <div className="group-setting-keys">
-                  {EXPENSE_KEYS.map(k => {
+                  {[...EXPENSE_KEYS, ...customCats.customExpenseKeys].map(k => {
                     const inThis = g.keys.includes(k);
                     const inOther = !inThis && assignedKeys.has(k);
                     return (
@@ -1534,7 +1664,7 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
                         className={`group-key-chip ${inThis ? 'active' : ''} ${inOther ? 'disabled' : ''}`}
                         disabled={inOther}
                         onClick={() => toggleKeyInGroup(g.id, k)}>
-                        {labels[k] || EXPENSE_LABELS[k]}
+                        {labels[k] || k}
                       </button>
                     );
                   })}
