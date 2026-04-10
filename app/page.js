@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { fetchAllData, updateRow, addRow } from '../lib/api';
+import { fetchAllData, updateRow, addRow, fetchSettings, saveSettings } from '../lib/api';
 import {
   formatYen, formatMonth, formatShortMonth, currentMonth, addMonths,
   totalIncome, totalExpense, surplus,
@@ -30,9 +30,32 @@ const DEMO_ROWS = [
   { rowNum:7, date:'2026-04', salary:220000, sideIncome:0, otherIncome:0, rent:43270, food:48000, electric:4500, gas:3800, water:3200, phone:5350, subscription:3980, transport:6500, daily:2800, insurance:5000, loan:15000, hobby:6000, beauty:5000, otherExpense:2000, extraExpense:0, balanceHokyo:322000, balanceRakuten:252000, notes:'' },
 ];
 
+// ── Cloud Settings Sync ──
+// Debounced save: collects all pending changes, sends once after 800ms idle
+const _pendingSettings = {};
+let _saveTimer = null;
+let _isDemo = false;
+
+function queueSettingsSave(key, value) {
+  _pendingSettings[key] = value;
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => {
+    if (_isDemo) return;
+    const toSave = { ..._pendingSettings };
+    for (const k in _pendingSettings) delete _pendingSettings[k];
+    saveSettings(toSave).catch(() => {});
+  }, 800);
+}
+
+function saveLocal(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  queueSettingsSave(key, value);
+}
+
 // ── Custom Label Hook ──
-function useCustomLabels() {
+function useCustomLabels(cloudSettings) {
   const [labels, setLabels] = useState({ ...EXPENSE_LABELS, ...INCOME_LABELS });
+  const initialized = useRef(false);
 
   useEffect(() => {
     try {
@@ -41,10 +64,20 @@ function useCustomLabels() {
     } catch {}
   }, []);
 
+  // Apply cloud settings when loaded
+  useEffect(() => {
+    if (!cloudSettings || initialized.current) return;
+    if (cloudSettings.customLabels) {
+      setLabels(prev => ({ ...prev, ...cloudSettings.customLabels }));
+      try { localStorage.setItem('customLabels', JSON.stringify(cloudSettings.customLabels)); } catch {}
+    }
+    initialized.current = true;
+  }, [cloudSettings]);
+
   const updateLabel = (key, newLabel) => {
     setLabels(prev => {
       const next = { ...prev, [key]: newLabel };
-      try { localStorage.setItem('customLabels', JSON.stringify(next)); } catch {}
+      saveLocal('customLabels', next);
       return next;
     });
   };
@@ -52,10 +85,10 @@ function useCustomLabels() {
   return [labels, updateLabel];
 }
 
-// ── Custom Categories Hook (localStorage-backed definitions for cx_*, ci_* keys) ──
-function useCustomCategories() {
+// ── Custom Categories Hook ──
+function useCustomCategories(cloudSettings) {
   const [cats, setCats] = useState([]);
-  // cats: [{ key: 'cx_1', label: '医療費', type: 'expense' }, ...]
+  const initialized = useRef(false);
 
   useEffect(() => {
     try {
@@ -64,9 +97,18 @@ function useCustomCategories() {
     } catch {}
   }, []);
 
+  useEffect(() => {
+    if (!cloudSettings || initialized.current) return;
+    if (cloudSettings.customCategories) {
+      setCats(cloudSettings.customCategories);
+      try { localStorage.setItem('customCategories', JSON.stringify(cloudSettings.customCategories)); } catch {}
+    }
+    initialized.current = true;
+  }, [cloudSettings]);
+
   const saveCats = (next) => {
     setCats(next);
-    try { localStorage.setItem('customCategories', JSON.stringify(next)); } catch {};
+    saveLocal('customCategories', next);
   };
 
   const nextKey = (type) => {
@@ -101,11 +143,12 @@ function useCustomCategories() {
 }
 
 // ── Category Order & Visibility Hook ──
-function useCategoryConfig(customExpenseKeys, customIncomeKeys) {
+function useCategoryConfig(customExpenseKeys, customIncomeKeys, cloudSettings) {
   const [config, setConfig] = useState({
     income: [...INCOME_KEYS],
     expense: [...EXPENSE_KEYS],
   });
+  const initialized = useRef(false);
 
   useEffect(() => {
     try {
@@ -121,6 +164,22 @@ function useCategoryConfig(customExpenseKeys, customIncomeKeys) {
       }
     } catch {}
   }, [customExpenseKeys.length, customIncomeKeys.length]);
+
+  useEffect(() => {
+    if (!cloudSettings || initialized.current) return;
+    if (cloudSettings.categoryConfig) {
+      const parsed = cloudSettings.categoryConfig;
+      const validIncome = new Set([...INCOME_KEYS, ...customIncomeKeys]);
+      const validExpense = new Set([...EXPENSE_KEYS, ...customExpenseKeys]);
+      const next = {
+        income: (parsed.income || []).filter(k => validIncome.has(k)),
+        expense: (parsed.expense || []).filter(k => validExpense.has(k)),
+      };
+      setConfig(next);
+      try { localStorage.setItem('categoryConfig', JSON.stringify(next)); } catch {}
+    }
+    initialized.current = true;
+  }, [cloudSettings, customExpenseKeys.length, customIncomeKeys.length]);
 
   // Ensure newly added custom keys appear in config
   useEffect(() => {
@@ -138,14 +197,14 @@ function useCategoryConfig(customExpenseKeys, customIncomeKeys) {
       }
       if (!changed) return prev;
       const next = { income: newIncome, expense: newExpense };
-      try { localStorage.setItem('categoryConfig', JSON.stringify(next)); } catch {}
+      saveLocal('categoryConfig', next);
       return next;
     });
   }, [customExpenseKeys.length, customIncomeKeys.length]);
 
   const save = (next) => {
     setConfig(next);
-    try { localStorage.setItem('categoryConfig', JSON.stringify(next)); } catch {}
+    saveLocal('categoryConfig', next);
   };
 
   const reorder = (type, fromIdx, toIdx) => {
@@ -182,8 +241,9 @@ const DEFAULT_GROUPS = [
   { id: 'other', name: 'その他', keys: ['otherExpense', 'extraExpense'] },
 ];
 
-function useGroups() {
+function useGroups(cloudSettings) {
   const [groups, setGroups] = useState(DEFAULT_GROUPS);
+  const initialized = useRef(false);
 
   useEffect(() => {
     try {
@@ -192,9 +252,18 @@ function useGroups() {
     } catch {}
   }, []);
 
+  useEffect(() => {
+    if (!cloudSettings || initialized.current) return;
+    if (cloudSettings.expenseGroups) {
+      setGroups(cloudSettings.expenseGroups);
+      try { localStorage.setItem('expenseGroups', JSON.stringify(cloudSettings.expenseGroups)); } catch {}
+    }
+    initialized.current = true;
+  }, [cloudSettings]);
+
   const saveGroups = (next) => {
     setGroups(next);
-    try { localStorage.setItem('expenseGroups', JSON.stringify(next)); } catch {}
+    saveLocal('expenseGroups', next);
   };
 
   const updateGroups = (newGroups) => saveGroups(newGroups);
@@ -240,10 +309,11 @@ export default function Home() {
   const [saving, setSaving] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [customLabels, updateLabel] = useCustomLabels();
-  const [groups, updateGroups, resetGroups] = useGroups();
-  const customCats = useCustomCategories();
-  const [catConfig, catActions] = useCategoryConfig(customCats.customExpenseKeys, customCats.customIncomeKeys);
+  const [cloudSettings, setCloudSettings] = useState(null);
+  const [customLabels, updateLabel] = useCustomLabels(cloudSettings);
+  const [groups, updateGroups, resetGroups] = useGroups(cloudSettings);
+  const customCats = useCustomCategories(cloudSettings);
+  const [catConfig, catActions] = useCategoryConfig(customCats.customExpenseKeys, customCats.customIncomeKeys, cloudSettings);
   const [newCatModal, setNewCatModal] = useState(null); // 'income' | 'expense' | null
 
   // Merged labels: built-in labels + custom labels + user overrides
@@ -319,15 +389,22 @@ export default function Home() {
 
   const loadData = useCallback(async () => {
     try {
-      const result = await fetchAllData();
+      const [result, settingsResult] = await Promise.all([
+        fetchAllData(),
+        fetchSettings().catch(() => ({ settings: null })),
+      ]);
       if (result.error) throw new Error(result.error);
       setRows(result.rows || []);
       const cm = currentMonth();
       const idx = (result.rows || []).findIndex(r => r.date === cm);
       setCurrentIdx(idx >= 0 ? idx : Math.max(0, (result.rows || []).length - 1));
+      if (settingsResult.settings) {
+        setCloudSettings(settingsResult.settings);
+      }
     } catch {
       setRows(DEMO_ROWS);
       setIsDemo(true);
+      _isDemo = true;
       setCurrentIdx(DEMO_ROWS.length - 1);
     }
     setLoaded(true);

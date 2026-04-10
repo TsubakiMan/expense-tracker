@@ -1,5 +1,5 @@
 /**
- * 支出管理アプリ — GAS API バックエンド v3
+ * 支出管理アプリ — GAS API バックエンド v4
  *
  * スプレッドシート列: A-W (23列)
  * A:年月  B:給与  C:副収入  D:その他収入
@@ -9,10 +9,14 @@
  * R:その他支出  S:臨時支出
  * T:北洋銀行  U:楽天銀行  V:備考
  * W:カスタムデータ (JSON — カスタムカテゴリの値)
+ *
+ * 設定シート「設定」: A=キー, B=値(JSON)
+ *   保存キー: customLabels, categoryConfig, expenseGroups, customCategories
  */
 
 const SPREADSHEET_ID = 'YOUR_SPREADSHEET_ID_HERE';
 const SHEET_NAME = 'シート1';
+const SETTINGS_SHEET_NAME = '設定';
 
 const COL = {
   date:1, salary:2, sideIncome:3, otherIncome:4,
@@ -52,6 +56,7 @@ function doGet(e) {
     switch (action) {
       case 'getAll':        result = getAllData(); break;
       case 'getCategories': result = { categories: CATEGORIES }; break;
+      case 'getSettings':   result = getSettings(); break;
       default:              result = { error: 'Unknown action' };
     }
     return jsonResponse(result);
@@ -65,10 +70,11 @@ function doPost(e) {
     const body = JSON.parse(e.postData.contents);
     let result;
     switch (body.action) {
-      case 'updateRow': result = updateRow(body); break;
-      case 'addRow':    result = addRow(body); break;
-      case 'deleteRow': result = deleteRow(body); break;
-      default:          result = { error: 'Unknown action' };
+      case 'updateRow':     result = updateRow(body); break;
+      case 'addRow':        result = addRow(body); break;
+      case 'deleteRow':     result = deleteRow(body); break;
+      case 'saveSettings':  result = saveSettings(body); break;
+      default:              result = { error: 'Unknown action' };
     }
     return jsonResponse(result);
   } catch (err) {
@@ -88,9 +94,74 @@ function getSheet() {
   return SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME);
 }
 
+function getSettingsSheet() {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName(SETTINGS_SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(SETTINGS_SHEET_NAME);
+    sheet.getRange(1, 1).setValue('キー');
+    sheet.getRange(1, 2).setValue('値');
+    sheet.getRange(1, 1, 1, 2).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
 function isCustomKey(key) {
   return /^c[xi]_\d+$/.test(key);
 }
+
+// ── Settings ──
+
+function getSettings() {
+  var sheet = getSettingsSheet();
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { settings: {} };
+  var data = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  var settings = {};
+  for (var i = 0; i < data.length; i++) {
+    var key = data[i][0];
+    var val = data[i][1];
+    if (key) {
+      try { settings[key] = JSON.parse(val); } catch (e) { settings[key] = val; }
+    }
+  }
+  return { settings: settings };
+}
+
+function saveSettings(body) {
+  var sheet = getSettingsSheet();
+  var entries = body.settings;
+  if (!entries) return { error: 'settings required' };
+
+  // Read existing keys to find row numbers
+  var lastRow = sheet.getLastRow();
+  var existingKeys = {};
+  if (lastRow >= 2) {
+    var keys = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i][0]) existingKeys[keys[i][0]] = i + 2; // row number
+    }
+  }
+
+  // Upsert each setting
+  for (var key in entries) {
+    if (!entries.hasOwnProperty(key)) continue;
+    var jsonVal = JSON.stringify(entries[key]);
+    if (existingKeys[key]) {
+      sheet.getRange(existingKeys[key], 2).setValue(jsonVal);
+    } else {
+      var newRow = sheet.getLastRow() + 1;
+      sheet.getRange(newRow, 1).setValue(key);
+      sheet.getRange(newRow, 2).setValue(jsonVal);
+      existingKeys[key] = newRow;
+    }
+  }
+
+  return { success: true };
+}
+
+// ── Data ──
 
 function getAllData() {
   const sheet = getSheet();
@@ -128,7 +199,6 @@ function parseRow(r, rowNum) {
     notes:         r[21] || ''
   };
 
-  // Parse custom data JSON from column W
   var customStr = r[22] || '';
   if (customStr) {
     try {
@@ -138,9 +208,7 @@ function parseRow(r, rowNum) {
           row[k] = custom[k] || 0;
         }
       }
-    } catch (e) {
-      // Ignore malformed JSON
-    }
+    } catch (e) {}
   }
 
   return row;
@@ -163,14 +231,12 @@ function updateRow(body) {
   const rn = body.rowNum;
   if (!rn) return { error: 'rowNum required' };
 
-  // Update built-in columns
   Object.keys(COL).forEach(key => {
     if (key !== 'date' && key !== 'customData' && body[key] !== undefined) {
       sheet.getRange(rn, COL[key]).setValue(body[key]);
     }
   });
 
-  // Merge custom data: read existing, merge new
   var existingStr = sheet.getRange(rn, COL.customData).getValue() || '';
   var existing = {};
   if (existingStr) {
@@ -194,14 +260,12 @@ function addRow(body) {
   const dateStr = body.date || new Date().toISOString().slice(0, 7);
   sheet.getRange(newRow, COL.date).setValue(new Date(dateStr + '-01'));
 
-  // Set built-in columns
   Object.keys(COL).forEach(key => {
     if (key !== 'date' && key !== 'customData' && body[key] !== undefined) {
       sheet.getRange(newRow, COL[key]).setValue(body[key]);
     }
   });
 
-  // Set custom data
   var customJson = extractCustomData(body);
   if (customJson) {
     sheet.getRange(newRow, COL.customData).setValue(customJson);
@@ -233,4 +297,7 @@ function setupHeader() {
   sheet.getRange(1, 1, 1, h.length).setValues([h]);
   sheet.getRange(1, 1, 1, h.length).setFontWeight('bold');
   sheet.setFrozenRows(1);
+
+  // Also ensure settings sheet exists
+  getSettingsSheet();
 }
