@@ -170,6 +170,64 @@ export default function Home() {
   const [groups, updateGroups, resetGroups] = useGroups();
   const [catConfig, catActions] = useCategoryConfig();
 
+  // ── History-based navigation ──
+  const isPopping = useRef(false);
+
+  // Set initial history state
+  useEffect(() => {
+    history.replaceState({ view: 'home' }, '');
+  }, []);
+
+  // Navigate to a view (push history)
+  const navigate = useCallback((newView) => {
+    if (isPopping.current) return;
+    setView(newView);
+    history.pushState({ view: newView }, '');
+  }, []);
+
+  // Open modal (push history layer)
+  const openEditModal = useCallback((item) => {
+    haptic.medium();
+    setEditModal(item);
+    history.pushState({ view, modal: 'edit' }, '');
+  }, [view]);
+
+  const openSettings = useCallback(() => {
+    haptic.light();
+    setShowSettings(true);
+    history.pushState({ view, modal: 'settings' }, '');
+  }, [view]);
+
+  // Close modal without pushState (used by popstate and direct close)
+  const closeEditModal = useCallback(() => setEditModal(null), []);
+  const closeSettings = useCallback(() => setShowSettings(false), []);
+
+  // Close modal with history.back (used by UI close buttons)
+  const closeEditModalWithBack = useCallback(() => { history.back(); }, []);
+  const closeSettingsWithBack = useCallback(() => { history.back(); }, []);
+
+  // Listen for popstate (browser back)
+  useEffect(() => {
+    const onPopState = (e) => {
+      isPopping.current = true;
+      const state = e.state || { view: 'home' };
+
+      // If a modal is open, close it
+      if (editModal) {
+        setEditModal(null);
+      } else if (showSettings) {
+        setShowSettings(false);
+      } else {
+        // Navigate to the view in the history state
+        setView(state.view || 'home');
+      }
+
+      isPopping.current = false;
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [editModal, showSettings]);
+
   const loadData = useCallback(async () => {
     try {
       const result = await fetchAllData();
@@ -204,7 +262,7 @@ export default function Home() {
         await loadData();
       }
       showToast('保存しました');
-      setEditModal(null);
+      if (editModal) closeEditModalWithBack();
     } catch (e) { showToast('エラー: ' + e.message, true); }
     setSaving(false);
   };
@@ -220,7 +278,7 @@ export default function Home() {
         await loadData();
       }
       showToast('追加しました');
-      setView('home');
+      navigate('home');
     } catch (e) { showToast('エラー: ' + e.message, true); }
     setSaving(false);
   };
@@ -239,25 +297,25 @@ export default function Home() {
         <HomeView
           row={row} rows={rows} labels={customLabels} groups={groups} catConfig={catConfig}
           currentIdx={currentIdx} prevMonth={prevMonth} nextMonth={nextMonth}
-          onEdit={(item) => { haptic.medium(); setEditModal(item); }}
-          onSettings={() => { haptic.light(); setShowSettings(true); }}
-          onGoInput={() => setView('input')}
+          onEdit={openEditModal}
+          onSettings={openSettings}
+          onGoInput={() => navigate('input')}
         />
       )}
       {view === 'history' && (
-        <HistoryView rows={rows} onSelect={(idx) => { haptic.light(); setCurrentIdx(idx); setView('home'); }} />
+        <HistoryView rows={rows} onSelect={(idx) => { haptic.light(); setCurrentIdx(idx); navigate('home'); }} />
       )}
       {view === 'input' && (
         <InputView
           row={row} rows={rows} labels={customLabels} catConfig={catConfig}
           onSave={handleSave} onAdd={handleAdd} saving={saving}
-          onSettings={() => { haptic.light(); setShowSettings(true); }}
+          onSettings={openSettings}
         />
       )}
       {view === 'forecast' && <ForecastView rows={rows} labels={customLabels} />}
 
       {editModal && (
-        <EditModal item={editModal} onSave={handleSave} onClose={() => setEditModal(null)} saving={saving} />
+        <EditModal item={editModal} onSave={handleSave} onClose={closeEditModalWithBack} saving={saving} />
       )}
 
       {showSettings && (
@@ -265,7 +323,7 @@ export default function Home() {
           labels={customLabels} onUpdate={updateLabel}
           groups={groups} onUpdateGroups={updateGroups} onResetGroups={resetGroups}
           catConfig={catConfig} catActions={catActions}
-          onClose={() => setShowSettings(false)}
+          onClose={closeSettingsWithBack}
         />
       )}
 
@@ -278,7 +336,7 @@ export default function Home() {
           { id:'input', label:'入力', d:'M12 4v16m8-8H4' },
           { id:'forecast', label:'予測', d:'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
         ].map(n => (
-          <button key={n.id} className={`nav-item ${view === n.id ? 'active' : ''}`} onClick={() => { haptic.light(); setView(n.id); }}>
+          <button key={n.id} className={`nav-item ${view === n.id ? 'active' : ''}`} onClick={() => { haptic.light(); navigate(n.id); }}>
             <svg className="nav-icon" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d={n.d} />
             </svg>
