@@ -389,26 +389,23 @@ export default function Home() {
 
   const loadData = useCallback(async () => {
     try {
-      const [result, settingsResult] = await Promise.all([
-        fetchAllData(),
-        fetchSettings().catch(() => ({ settings: null })),
-      ]);
+      // Single API call — getAllData now includes settings
+      const result = await fetchAllData();
       if (result.error) throw new Error(result.error);
       setRows(result.rows || []);
       const cm = currentMonth();
       const idx = (result.rows || []).findIndex(r => r.date === cm);
       setCurrentIdx(idx >= 0 ? idx : Math.max(0, (result.rows || []).length - 1));
 
-      const cloud = settingsResult.settings || {};
+      const cloud = result.settings || {};
       const SETTINGS_KEYS = ['customLabels', 'categoryConfig', 'expenseGroups', 'customCategories'];
       const cloudHasData = SETTINGS_KEYS.some(k => cloud[k]);
 
       if (cloudHasData) {
-        // Cloud has settings — use as source of truth
         setCloudSettings(cloud);
       }
 
-      // Always push local settings that cloud doesn't have yet
+      // Push local settings that cloud doesn't have yet
       const localSettings = {};
       SETTINGS_KEYS.forEach(k => {
         if (!cloud[k]) {

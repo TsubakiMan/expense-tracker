@@ -166,10 +166,14 @@ function saveSettings(body) {
 function getAllData() {
   const sheet = getSheet();
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return { rows: [], categories: CATEGORIES };
-  const data = sheet.getRange(2, 1, lastRow - 1, TOTAL_COLS).getValues();
-  const rows = data.map((r, i) => parseRow(r, i + 2));
-  return { rows, categories: CATEGORIES };
+  var rows = [];
+  if (lastRow >= 2) {
+    const data = sheet.getRange(2, 1, lastRow - 1, TOTAL_COLS).getValues();
+    rows = data.map((r, i) => parseRow(r, i + 2));
+  }
+  // Include settings in the same response to avoid a second API call
+  const settingsData = getSettings();
+  return { rows: rows, categories: CATEGORIES, settings: settingsData.settings || {} };
 }
 
 function parseRow(r, rowNum) {
