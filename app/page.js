@@ -717,78 +717,7 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
 
   const toggleGroup = (id) => { haptic.light(); setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] })); };
 
-  // Swipe / drag month navigation — supports both touch and mouse
-  const swipeRef = useRef(null);
-  const swipeState = useRef({ startX: 0, startY: 0, fired: false, active: false, locked: false });
-  const prevMonthRef = useRef(prevMonth);
-  const nextMonthRef = useRef(nextMonth);
-  useEffect(() => { prevMonthRef.current = prevMonth; }, [prevMonth]);
-  useEffect(() => { nextMonthRef.current = nextMonth; }, [nextMonth]);
-
-  const handleSwipeMove = useCallback((clientX, clientY) => {
-    const s = swipeState.current;
-    if (!s.active || s.fired) return;
-    const dx = clientX - s.startX;
-    const dy = clientY - s.startY;
-    // Lock direction after 10px of movement
-    if (!s.locked && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
-      s.locked = true;
-      s.isHorizontal = Math.abs(dx) >= Math.abs(dy);
-    }
-    if (s.locked && !s.isHorizontal) { s.active = false; return; }
-    // Horizontal swipe threshold: 50px
-    if (s.locked && s.isHorizontal && Math.abs(dx) > 50) {
-      s.fired = true;
-      if (dx < 0) nextMonthRef.current();
-      else prevMonthRef.current();
-    }
-  }, []);
-
-  useEffect(() => {
-    const el = swipeRef.current;
-    if (!el) return;
-    const s = swipeState.current;
-
-    // Touch events
-    const onTouchStart = (e) => {
-      const t = e.touches[0];
-      s.startX = t.clientX; s.startY = t.clientY;
-      s.fired = false; s.active = true; s.locked = false;
-    };
-    const onTouchMove = (e) => {
-      if (!s.active || s.fired) return;
-      handleSwipeMove(e.touches[0].clientX, e.touches[0].clientY);
-    };
-    const onTouchEnd = () => { s.active = false; s.locked = false; };
-
-    // Mouse events (PC drag support)
-    const onMouseDown = (e) => {
-      // Ignore clicks on buttons, inputs, links
-      if (e.target.closest('button, input, a, select, textarea, .cat-drag-handle')) return;
-      s.startX = e.clientX; s.startY = e.clientY;
-      s.fired = false; s.active = true; s.locked = false;
-    };
-    const onMouseMove = (e) => {
-      if (!s.active || s.fired) return;
-      handleSwipeMove(e.clientX, e.clientY);
-    };
-    const onMouseUp = () => { s.active = false; s.locked = false; };
-
-    el.addEventListener('touchstart', onTouchStart, { passive: true });
-    el.addEventListener('touchmove', onTouchMove, { passive: true });
-    el.addEventListener('touchend', onTouchEnd, { passive: true });
-    el.addEventListener('mousedown', onMouseDown);
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-    return () => {
-      el.removeEventListener('touchstart', onTouchStart);
-      el.removeEventListener('touchmove', onTouchMove);
-      el.removeEventListener('touchend', onTouchEnd);
-      el.removeEventListener('mousedown', onMouseDown);
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    };
-  }, []);
+  // No swipe needed — edge arrow taps handle navigation
 
   // Build projected row for months without actual data (hook must be before any return)
   const isProjected = !row && rows.length > 0;
@@ -930,24 +859,36 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
   const maxGroupExp = Math.max(...groupData.map(g => g.total), ...ungroupedItems.map(u => u.amount), 1);
 
   return (
-    <div className="fade-in" ref={swipeRef} style={{ touchAction: 'pan-y' }}>
+    <div className="fade-in">
+      {/* Fixed header — brand + settings only */}
       <div className="header">
         <div className="header-top">
           <span className="header-brand">Money Flow</span>
-          <div className="header-actions">
-            <div className="month-nav">
-              <button onClick={prevMonth}>&lt;</button>
-              <span className="current-month">{formatMonth(viewMonth)}</span>
-              <button onClick={nextMonth}>&gt;</button>
-            </div>
-            <button className="settings-pill" onClick={onSettings}>
-              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-              </svg>
-              設定
-            </button>
-          </div>
+          <button className="settings-pill" onClick={onSettings}>
+            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+            </svg>
+            設定
+          </button>
         </div>
+      </div>
+
+      {/* Month navigation — large tap area with edge arrows */}
+      <div className="month-switcher">
+        <button className="month-edge-btn month-edge-prev" onClick={prevMonth} aria-label="前月">
+          <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <div className="month-switcher-center">
+          <div className="month-switcher-date">{formatMonth(viewMonth)}</div>
+          {isProjected && <div className="month-switcher-badge">予測</div>}
+        </div>
+        <button className="month-edge-btn month-edge-next" onClick={nextMonth} aria-label="翌月">
+          <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
       </div>
 
       {isProjected && (
