@@ -717,53 +717,76 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
 
   const toggleGroup = (id) => { haptic.light(); setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] })); };
 
-  // Swipe month navigation — document-level listener for reliable mobile detection
-  const swipeState = useRef({ startX: 0, startY: 0, fired: false, active: false });
+  // Swipe / drag month navigation — supports both touch and mouse
+  const swipeRef = useRef(null);
+  const swipeState = useRef({ startX: 0, startY: 0, fired: false, active: false, locked: false });
   const prevMonthRef = useRef(prevMonth);
   const nextMonthRef = useRef(nextMonth);
   useEffect(() => { prevMonthRef.current = prevMonth; }, [prevMonth]);
   useEffect(() => { nextMonthRef.current = nextMonth; }, [nextMonth]);
 
-  useEffect(() => {
-    const state = swipeState.current;
+  const handleSwipeMove = useCallback((clientX, clientY) => {
+    const s = swipeState.current;
+    if (!s.active || s.fired) return;
+    const dx = clientX - s.startX;
+    const dy = clientY - s.startY;
+    // Lock direction after 10px of movement
+    if (!s.locked && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+      s.locked = true;
+      s.isHorizontal = Math.abs(dx) >= Math.abs(dy);
+    }
+    if (s.locked && !s.isHorizontal) { s.active = false; return; }
+    // Horizontal swipe threshold: 50px
+    if (s.locked && s.isHorizontal && Math.abs(dx) > 50) {
+      s.fired = true;
+      if (dx < 0) nextMonthRef.current();
+      else prevMonthRef.current();
+    }
+  }, []);
 
+  useEffect(() => {
+    const el = swipeRef.current;
+    if (!el) return;
+    const s = swipeState.current;
+
+    // Touch events
     const onTouchStart = (e) => {
       const t = e.touches[0];
-      state.startX = t.clientX;
-      state.startY = t.clientY;
-      state.fired = false;
-      state.active = true;
+      s.startX = t.clientX; s.startY = t.clientY;
+      s.fired = false; s.active = true; s.locked = false;
     };
-
     const onTouchMove = (e) => {
-      if (!state.active || state.fired) return;
-      const t = e.touches[0];
-      const dx = t.clientX - state.startX;
-      const dy = t.clientY - state.startY;
-      // If vertical scroll detected first, cancel swipe detection
-      if (Math.abs(dy) > 15 && Math.abs(dy) > Math.abs(dx)) {
-        state.active = false;
-        return;
-      }
-      // Horizontal swipe threshold: 50px
-      if (Math.abs(dx) > 50) {
-        state.fired = true;
-        if (dx < 0) nextMonthRef.current();   // swipe left → next month
-        else prevMonthRef.current();            // swipe right → prev month
-      }
+      if (!s.active || s.fired) return;
+      handleSwipeMove(e.touches[0].clientX, e.touches[0].clientY);
     };
+    const onTouchEnd = () => { s.active = false; s.locked = false; };
 
-    const onTouchEnd = () => {
-      state.active = false;
+    // Mouse events (PC drag support)
+    const onMouseDown = (e) => {
+      // Ignore clicks on buttons, inputs, links
+      if (e.target.closest('button, input, a, select, textarea, .cat-drag-handle')) return;
+      s.startX = e.clientX; s.startY = e.clientY;
+      s.fired = false; s.active = true; s.locked = false;
     };
+    const onMouseMove = (e) => {
+      if (!s.active || s.fired) return;
+      handleSwipeMove(e.clientX, e.clientY);
+    };
+    const onMouseUp = () => { s.active = false; s.locked = false; };
 
-    document.addEventListener('touchstart', onTouchStart, { passive: true });
-    document.addEventListener('touchmove', onTouchMove, { passive: true });
-    document.addEventListener('touchend', onTouchEnd, { passive: true });
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: true });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+    el.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
     return () => {
-      document.removeEventListener('touchstart', onTouchStart);
-      document.removeEventListener('touchmove', onTouchMove);
-      document.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
     };
   }, []);
 
@@ -907,7 +930,7 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
   const maxGroupExp = Math.max(...groupData.map(g => g.total), ...ungroupedItems.map(u => u.amount), 1);
 
   return (
-    <div className="fade-in">
+    <div className="fade-in" ref={swipeRef} style={{ touchAction: 'pan-y' }}>
       <div className="header">
         <div className="header-top">
           <span className="header-brand">Money Flow</span>
