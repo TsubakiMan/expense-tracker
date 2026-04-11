@@ -186,10 +186,8 @@ html, body {
 .month-switcher {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 8px;
-  margin: 0 16px;
-  position: relative;
+  justify-content: center;
+  padding: 10px 8px 6px;
 }
 
 .month-switcher-center {
@@ -216,32 +214,44 @@ html, body {
   letter-spacing: 0.05em;
 }
 
-.month-edge-btn {
+/* Floating edge arrows — fixed at screen mid-height */
+.month-float-btn {
+  position: fixed;
+  top: 55%;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 48px;
-  border: 1.5px solid var(--border);
-  border-radius: 50%;
-  background: var(--bg);
-  color: var(--text-secondary);
+  width: 40px;
+  height: 56px;
+  border: none;
+  background: rgba(99,102,241,0.12);
+  color: var(--accent);
   cursor: pointer;
   transition: all 0.2s;
-  flex-shrink: 0;
   -webkit-tap-highlight-color: transparent;
 }
 
-.month-edge-btn:hover {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: var(--accent);
+.month-float-prev {
+  left: 0;
+  border-radius: 0 12px 12px 0;
+  padding-left: 2px;
 }
 
-.month-edge-btn:active {
-  transform: scale(0.9);
+.month-float-next {
+  right: 0;
+  border-radius: 12px 0 0 12px;
+  padding-right: 2px;
+}
+
+.month-float-btn:hover {
+  background: rgba(99,102,241,0.22);
+}
+
+.month-float-btn:active {
   background: var(--accent);
   color: #fff;
+  transform: scaleX(1.1);
 }
 
 /* ── Hero ── */

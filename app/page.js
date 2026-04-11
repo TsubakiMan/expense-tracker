@@ -873,23 +873,25 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
         </div>
       </div>
 
-      {/* Month navigation — large tap area with edge arrows */}
+      {/* Month name display */}
       <div className="month-switcher">
-        <button className="month-edge-btn month-edge-prev" onClick={prevMonth} aria-label="前月">
-          <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
         <div className="month-switcher-center">
           <div className="month-switcher-date">{formatMonth(viewMonth)}</div>
           {isProjected && <div className="month-switcher-badge">予測</div>}
         </div>
-        <button className="month-edge-btn month-edge-next" onClick={nextMonth} aria-label="翌月">
-          <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
       </div>
+
+      {/* Fixed edge arrows — positioned at screen mid-height for thumb reach */}
+      <button className="month-float-btn month-float-prev" onClick={prevMonth} aria-label="前月">
+        <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+        </svg>
+      </button>
+      <button className="month-float-btn month-float-next" onClick={nextMonth} aria-label="翌月">
+        <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
 
       {isProjected && (
         <div className="projected-banner">
