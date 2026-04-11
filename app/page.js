@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { fetchAllData, updateRow, addRow, fetchSettings, saveSettings } from '../lib/api';
+import { fetchAllData, updateRow, addRow, deleteRow, saveSettings } from '../lib/api';
 import {
   formatYen, formatMonth, formatShortMonth, currentMonth, addMonths,
   totalIncome, totalExpense, surplus,
@@ -87,49 +87,62 @@ function useCustomLabels(cloudSettings) {
 
 // ── Custom Categories Hook ──
 function useCustomCategories(cloudSettings) {
-  const [cats, setCats] = useState([]);
+  const [cats, setCats] = useState(() => {
+    try {
+      const saved = localStorage.getItem('customCategories');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const initialized = useRef(false);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('customCategories');
-      if (saved) setCats(JSON.parse(saved));
-    } catch {}
-  }, []);
-
-  useEffect(() => {
     if (!cloudSettings || initialized.current) return;
-    if (cloudSettings.customCategories) {
-      setCats(cloudSettings.customCategories);
-      try { localStorage.setItem('customCategories', JSON.stringify(cloudSettings.customCategories)); } catch {}
-    }
     initialized.current = true;
+    if (cloudSettings.customCategories) {
+      // Merge cloud with local — local may have newer entries not yet synced
+      setCats(prev => {
+        const cloudCats = cloudSettings.customCategories;
+        const localKeys = new Set(prev.map(c => c.key));
+        const cloudKeys = new Set(cloudCats.map(c => c.key));
+        // Start with cloud data, add any local-only entries
+        const merged = [...cloudCats];
+        for (const c of prev) {
+          if (!cloudKeys.has(c.key)) merged.push(c);
+        }
+        try { localStorage.setItem('customCategories', JSON.stringify(merged)); } catch {}
+        return merged;
+      });
+    }
   }, [cloudSettings]);
 
-  const saveCats = (next) => {
-    setCats(next);
-    saveLocal('customCategories', next);
-  };
-
-  const nextKey = (type) => {
-    const prefix = type === 'income' ? 'ci_' : 'cx_';
-    const existing = cats.filter(c => c.key.startsWith(prefix)).map(c => parseInt(c.key.split('_')[1]));
-    const next = existing.length > 0 ? Math.max(...existing) + 1 : 1;
-    return prefix + next;
+  const saveCats = (updater) => {
+    setCats(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      saveLocal('customCategories', next);
+      return next;
+    });
   };
 
   const add = (label, type) => {
-    const key = nextKey(type);
-    saveCats([...cats, { key, label, type }]);
+    let key;
+    setCats(prev => {
+      const prefix = type === 'income' ? 'ci_' : 'cx_';
+      const existing = prev.filter(c => c.key.startsWith(prefix)).map(c => parseInt(c.key.split('_')[1]));
+      const nextNum = existing.length > 0 ? Math.max(...existing) + 1 : 1;
+      key = prefix + nextNum;
+      const next = [...prev, { key, label, type }];
+      saveLocal('customCategories', next);
+      return next;
+    });
     return key;
   };
 
   const remove = (key) => {
-    saveCats(cats.filter(c => c.key !== key));
+    saveCats(prev => prev.filter(c => c.key !== key));
   };
 
   const rename = (key, label) => {
-    saveCats(cats.map(c => c.key === key ? { ...c, label } : c));
+    saveCats(prev => prev.map(c => c.key === key ? { ...c, label } : c));
   };
 
   const customExpenseKeys = cats.filter(c => c.type === 'expense').map(c => c.key);
@@ -137,49 +150,45 @@ function useCustomCategories(cloudSettings) {
   const customLabelsMap = Object.fromEntries(cats.map(c => [c.key, c.label]));
 
   const totalCount = INCOME_KEYS.length + EXPENSE_KEYS.length + cats.length;
-  const canAdd = totalCount < MAX_CATEGORIES;
+  const canAdd = true;
 
   return { cats, add, remove, rename, customExpenseKeys, customIncomeKeys, customLabelsMap, canAdd, totalCount };
 }
 
 // ── Category Order & Visibility Hook ──
 function useCategoryConfig(customExpenseKeys, customIncomeKeys, cloudSettings) {
-  const [config, setConfig] = useState({
-    income: [...INCOME_KEYS],
-    expense: [...EXPENSE_KEYS],
+  const [config, setConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem('categoryConfig');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return { income: [...INCOME_KEYS], expense: [...EXPENSE_KEYS] };
   });
   const initialized = useRef(false);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('categoryConfig');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const validIncome = new Set([...INCOME_KEYS, ...customIncomeKeys]);
-        const validExpense = new Set([...EXPENSE_KEYS, ...customExpenseKeys]);
-        setConfig({
-          income: (parsed.income || []).filter(k => validIncome.has(k)),
-          expense: (parsed.expense || []).filter(k => validExpense.has(k)),
-        });
-      }
-    } catch {}
-  }, [customExpenseKeys.length, customIncomeKeys.length]);
-
-  useEffect(() => {
     if (!cloudSettings || initialized.current) return;
+    initialized.current = true;
     if (cloudSettings.categoryConfig) {
       const parsed = cloudSettings.categoryConfig;
-      const validIncome = new Set([...INCOME_KEYS, ...customIncomeKeys]);
-      const validExpense = new Set([...EXPENSE_KEYS, ...customExpenseKeys]);
-      const next = {
-        income: (parsed.income || []).filter(k => validIncome.has(k)),
-        expense: (parsed.expense || []).filter(k => validExpense.has(k)),
-      };
-      setConfig(next);
-      try { localStorage.setItem('categoryConfig', JSON.stringify(next)); } catch {}
+      setConfig(prev => {
+        // Merge: keep local keys that aren't in cloud yet
+        const localIncomeSet = new Set(prev.income);
+        const localExpenseSet = new Set(prev.expense);
+        const mergedIncome = [...(parsed.income || [])];
+        const mergedExpense = [...(parsed.expense || [])];
+        for (const k of prev.income) {
+          if (!mergedIncome.includes(k)) mergedIncome.push(k);
+        }
+        for (const k of prev.expense) {
+          if (!mergedExpense.includes(k)) mergedExpense.push(k);
+        }
+        const next = { income: mergedIncome, expense: mergedExpense };
+        try { localStorage.setItem('categoryConfig', JSON.stringify(next)); } catch {}
+        return next;
+      });
     }
-    initialized.current = true;
-  }, [cloudSettings, customExpenseKeys.length, customIncomeKeys.length]);
+  }, [cloudSettings]);
 
   // Ensure newly added custom keys appear in config
   useEffect(() => {
@@ -202,24 +211,29 @@ function useCategoryConfig(customExpenseKeys, customIncomeKeys, cloudSettings) {
     });
   }, [customExpenseKeys.length, customIncomeKeys.length]);
 
-  const save = (next) => {
-    setConfig(next);
-    saveLocal('categoryConfig', next);
+  const save = (updater) => {
+    setConfig(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      saveLocal('categoryConfig', next);
+      return next;
+    });
   };
 
   const reorder = (type, fromIdx, toIdx) => {
-    const arr = [...config[type]];
-    const [item] = arr.splice(fromIdx, 1);
-    arr.splice(toIdx, 0, item);
-    save({ ...config, [type]: arr });
+    save(prev => {
+      const arr = [...prev[type]];
+      const [item] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, item);
+      return { ...prev, [type]: arr };
+    });
   };
 
   const hide = (type, key) => {
-    save({ ...config, [type]: config[type].filter(k => k !== key) });
+    save(prev => ({ ...prev, [type]: prev[type].filter(k => k !== key) }));
   };
 
   const show = (type, key) => {
-    save({ ...config, [type]: [...config[type], key] });
+    save(prev => ({ ...prev, [type]: [...prev[type], key] }));
   };
 
   const reset = () => {
@@ -273,6 +287,126 @@ function useGroups(cloudSettings) {
   return [groups, updateGroups, resetGroups];
 }
 
+// ── Category Schedule Hook ── (終了月・季節発生・季節加算を管理)
+// schedule[key] = { endDate, seasonStart, seasonEnd, extraAmount, extraStart, extraEnd }
+function useCategorySchedule(cloudSettings) {
+  const [schedule, setSchedule] = useState(() => {
+    try {
+      const saved = localStorage.getItem('categorySchedule');
+      if (saved) return JSON.parse(saved);
+      // Migrate from old endDates format
+      const old = localStorage.getItem('categoryEndDates');
+      if (old) {
+        const endDates = JSON.parse(old);
+        const migrated = {};
+        for (const [k, v] of Object.entries(endDates)) {
+          migrated[k] = { endDate: v };
+        }
+        return migrated;
+      }
+    } catch {}
+    return {};
+  });
+  const initialized = useRef(false);
+
+  useEffect(() => {
+    if (!cloudSettings || initialized.current) return;
+    initialized.current = true;
+    const cloud = cloudSettings.categorySchedule || cloudSettings.categoryEndDates;
+    if (cloud) {
+      setSchedule(prev => {
+        // If old format (string values), migrate
+        const merged = { ...prev };
+        for (const [k, v] of Object.entries(cloud)) {
+          if (typeof v === 'string') {
+            merged[k] = { ...(merged[k] || {}), endDate: v };
+          } else {
+            merged[k] = { ...(merged[k] || {}), ...v };
+          }
+        }
+        try { localStorage.setItem('categorySchedule', JSON.stringify(merged)); } catch {}
+        return merged;
+      });
+    }
+  }, [cloudSettings]);
+
+  const update = (key, field, value) => {
+    setSchedule(prev => {
+      const next = { ...prev };
+      if (!next[key]) next[key] = {};
+      if (value === null || value === '' || value === undefined) {
+        delete next[key][field];
+        if (Object.keys(next[key]).length === 0) delete next[key];
+      } else {
+        next[key] = { ...next[key], [field]: value };
+      }
+      saveLocal('categorySchedule', next);
+      return next;
+    });
+  };
+
+  const get = (key) => schedule[key] || {};
+
+  // For backward compat
+  const endDates = {};
+  for (const [k, v] of Object.entries(schedule)) {
+    if (v.endDate) endDates[k] = v.endDate;
+  }
+
+  // Check if category is active in a given month (YYYY-MM)
+  const isActiveInMonth = (key, month) => {
+    const s = schedule[key];
+    if (!s) return true;
+    // End date check
+    if (s.endDate && month > s.endDate) return false;
+    // Season check (month number 1-12)
+    if (s.seasonStart && s.seasonEnd) {
+      const m = parseInt(month.split('-')[1]);
+      if (s.seasonStart <= s.seasonEnd) {
+        // e.g. 6-9 (Jun-Sep)
+        if (m < s.seasonStart || m > s.seasonEnd) return false;
+      } else {
+        // e.g. 11-2 (Nov-Feb, wraps around year)
+        if (m < s.seasonStart && m > s.seasonEnd) return false;
+      }
+    }
+    return true;
+  };
+
+  // Get extra seasonal amount for a given month
+  const getExtraAmount = (key, month) => {
+    const s = schedule[key];
+    if (!s || !s.extraAmount || !s.extraStart || !s.extraEnd) return 0;
+    const m = parseInt(month.split('-')[1]);
+    if (s.extraStart <= s.extraEnd) {
+      if (m >= s.extraStart && m <= s.extraEnd) return s.extraAmount;
+    } else {
+      if (m >= s.extraStart || m <= s.extraEnd) return s.extraAmount;
+    }
+    return 0;
+  };
+
+  // Get future amount change diff for a given month (income raise etc.)
+  const getFutureAmountDiff = (key, month) => {
+    const s = schedule[key];
+    if (!s || !s.futureAmount || !s.futureStart) return 0;
+    if (month >= s.futureStart) {
+      return s.futureAmount - (s.currentAmount || 0);
+    }
+    return 0;
+  };
+
+  // Get bonus amount for a specific month (one-time bonus prediction)
+  const getBonusAmount = (key, month) => {
+    const s = schedule[key];
+    if (!s || !s.bonusAmount || !s.bonusMonth) return 0;
+    if (month === s.bonusMonth) return s.bonusAmount;
+    return 0;
+  };
+
+  return { schedule, update, get, endDates, isActiveInMonth, getExtraAmount, getFutureAmountDiff, getBonusAmount };
+}
+
 // ── Number Input Helper: allows clearing the field ──
 function NumInput({ value, onChange, ...props }) {
   const [display, setDisplay] = useState(String(value || ''));
@@ -302,6 +436,7 @@ function NumInput({ value, onChange, ...props }) {
 export default function Home() {
   const [rows, setRows] = useState([]);
   const [currentIdx, setCurrentIdx] = useState(0);
+  const [viewMonth, setViewMonth] = useState(null); // YYYY-MM, null = use currentIdx
   const [view, setView] = useState('home');
   const [editModal, setEditModal] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -314,7 +449,9 @@ export default function Home() {
   const [groups, updateGroups, resetGroups] = useGroups(cloudSettings);
   const customCats = useCustomCategories(cloudSettings);
   const [catConfig, catActions] = useCategoryConfig(customCats.customExpenseKeys, customCats.customIncomeKeys, cloudSettings);
+  const scheduleHook = useCategorySchedule(cloudSettings);
   const [newCatModal, setNewCatModal] = useState(null); // 'income' | 'expense' | null
+  const [newCatGroupId, setNewCatGroupId] = useState(null); // pre-selected group for new category
 
   // Merged labels: built-in labels + custom labels + user overrides
   const allLabels = useMemo(() => ({
@@ -349,16 +486,21 @@ export default function Home() {
     history.pushState({ view, modal: 'settings' }, '');
   }, [view]);
 
-  const openNewCatModal = useCallback((type) => {
+  const openNewCatModal = useCallback((type, groupId = null) => {
     haptic.light();
     setNewCatModal(type);
+    setNewCatGroupId(groupId);
     history.pushState({ view, modal: 'newcat' }, '');
   }, [view]);
 
   // Close modal without pushState (used by popstate and direct close)
   const closeEditModal = useCallback(() => setEditModal(null), []);
   const closeSettings = useCallback(() => setShowSettings(false), []);
-  const closeNewCatModal = useCallback(() => setNewCatModal(null), []);
+  const closeNewCatModal = useCallback(() => {
+    setNewCatModal(null);
+    // Replace current history entry to remove modal state, keeping current view
+    history.replaceState({ view }, '');
+  }, [view]);
 
   // Close modal with history.back (used by UI close buttons)
   const closeEditModalWithBack = useCallback(() => { history.back(); }, []);
@@ -369,16 +511,17 @@ export default function Home() {
   useEffect(() => {
     const onPopState = (e) => {
       isPopping.current = true;
-      const state = e.state || { view: 'home' };
+      const state = e.state || {};
 
       if (newCatModal) {
         setNewCatModal(null);
+        // Stay on current view — don't change it
       } else if (editModal) {
         setEditModal(null);
       } else if (showSettings) {
         setShowSettings(false);
-      } else {
-        setView(state.view || 'home');
+      } else if (state.view) {
+        setView(state.view);
       }
 
       isPopping.current = false;
@@ -396,6 +539,7 @@ export default function Home() {
       const cm = currentMonth();
       const idx = (result.rows || []).findIndex(r => r.date === cm);
       setCurrentIdx(idx >= 0 ? idx : Math.max(0, (result.rows || []).length - 1));
+      setViewMonth(cm);
 
       const cloud = result.settings || {};
       const SETTINGS_KEYS = ['customLabels', 'categoryConfig', 'expenseGroups', 'customCategories'];
@@ -423,6 +567,7 @@ export default function Home() {
       setIsDemo(true);
       _isDemo = true;
       setCurrentIdx(DEMO_ROWS.length - 1);
+      setViewMonth(DEMO_ROWS[DEMO_ROWS.length - 1].date);
     }
     setLoaded(true);
   }, []);
@@ -456,7 +601,6 @@ export default function Home() {
     setRows(prev => [...prev, { rowNum: tempRowNum, ...newData }]);
     setCurrentIdx(rows.length);
     showToast('追加しました');
-    navigate('home');
     setSaving(false);
     // Persist & sync real rowNum
     if (!isDemo) {
@@ -468,6 +612,11 @@ export default function Home() {
   if (!loaded) return <div className="loading"><div className="spinner" /><span className="loading-text">Loading...</span></div>;
 
   const row = rows[currentIdx];
+  // viewMonth-based navigation for HomeView
+  const homeRow = viewMonth ? rows.find(r => r.date === viewMonth) : row;
+  const prevMonthNav = () => { haptic.light(); setViewMonth(m => addMonths(m || row?.date || currentMonth(), -1)); };
+  const nextMonthNav = () => { haptic.light(); setViewMonth(m => addMonths(m || row?.date || currentMonth(), 1)); };
+  // Legacy index-based (for history select)
   const prevMonth = () => { haptic.light(); setCurrentIdx(i => Math.max(0, i - 1)); };
   const nextMonth = () => { haptic.light(); setCurrentIdx(i => Math.min(rows.length - 1, i + 1)); };
 
@@ -477,16 +626,18 @@ export default function Home() {
 
       {view === 'home' && (
         <HomeView
-          row={row} rows={rows} labels={allLabels} groups={groups} catConfig={catConfig}
+          row={homeRow} rows={rows} labels={allLabels} groups={groups} catConfig={catConfig}
           customExpenseKeys={customCats.customExpenseKeys} customIncomeKeys={customCats.customIncomeKeys}
-          currentIdx={currentIdx} prevMonth={prevMonth} nextMonth={nextMonth}
+          viewMonth={viewMonth || row?.date || currentMonth()}
+          prevMonth={prevMonthNav} nextMonth={nextMonthNav}
           onEdit={openEditModal}
           onSettings={openSettings}
           onGoInput={() => navigate('input')}
+          scheduleHook={scheduleHook}
         />
       )}
       {view === 'history' && (
-        <HistoryView rows={rows} onSelect={(idx) => { haptic.light(); setCurrentIdx(idx); navigate('home'); }}
+        <HistoryView rows={rows} onSelect={(idx) => { haptic.light(); setCurrentIdx(idx); setViewMonth(rows[idx]?.date); navigate('home'); }}
           customExpenseKeys={customCats.customExpenseKeys} customIncomeKeys={customCats.customIncomeKeys} />
       )}
       {view === 'input' && (
@@ -494,12 +645,16 @@ export default function Home() {
           row={row} rows={rows} labels={allLabels} catConfig={catConfig} groups={groups}
           customExpenseKeys={customCats.customExpenseKeys} customIncomeKeys={customCats.customIncomeKeys}
           onSave={handleSave} onAdd={handleAdd} saving={saving}
-          onSettings={openSettings}
-          onNewCategory={() => openNewCatModal('expense')}
+          onNewCategory={(type, groupId) => openNewCatModal(type, groupId)}
+          onUpdateLabel={updateLabel}
+          catActions={catActions} customCats={customCats}
+          onUpdateGroups={updateGroups}
+          scheduleHook={scheduleHook}
         />
       )}
       {view === 'forecast' && <ForecastView rows={rows} labels={allLabels}
-        customExpenseKeys={customCats.customExpenseKeys} customIncomeKeys={customCats.customIncomeKeys} />}
+        customExpenseKeys={customCats.customExpenseKeys} customIncomeKeys={customCats.customIncomeKeys}
+        scheduleHook={scheduleHook} catConfig={catConfig} />}
 
       {editModal && (
         <EditModal item={editModal} onSave={handleSave} onClose={closeEditModalWithBack} saving={saving} />
@@ -511,7 +666,7 @@ export default function Home() {
           groups={groups} onUpdateGroups={updateGroups} onResetGroups={resetGroups}
           catConfig={catConfig} catActions={catActions}
           customCats={customCats}
-          onNewCategory={(type) => openNewCatModal(type)}
+          onNewCategory={(type, groupId) => openNewCatModal(type, groupId)}
           onClose={closeSettingsWithBack}
         />
       )}
@@ -521,14 +676,15 @@ export default function Home() {
           type={newCatModal}
           groups={groups} labels={allLabels} catConfig={catConfig}
           customCats={customCats}
-          onAdd={(key, name, groupId) => {
-            updateLabel(key, name);
+          defaultGroupId={newCatGroupId}
+          onAdd={(key, label, groupId) => {
+            updateLabel(key, label);
             catActions.show(newCatModal, key);
             if (groupId) {
               updateGroups(groups.map(g => g.id === groupId ? { ...g, keys: [...g.keys, key] } : g));
             }
           }}
-          onClose={closeNewCatModalWithBack}
+          onClose={closeNewCatModal}
         />
       )}
 
@@ -554,14 +710,106 @@ export default function Home() {
 }
 
 // ── Home View ──
-function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, customIncomeKeys, currentIdx, prevMonth, nextMonth, onEdit, onSettings, onGoInput }) {
+function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, customIncomeKeys, viewMonth, prevMonth, nextMonth, onEdit, onSettings, onGoInput, scheduleHook }) {
   const [expandedGroups, setExpandedGroups] = useState({});
   const visibleExpense = new Set(catConfig.expense);
   const visibleIncome = new Set(catConfig.income);
 
   const toggleGroup = (id) => { haptic.light(); setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] })); };
 
-  if (!row) {
+  // Build projected row for months without actual data (hook must be before any return)
+  const isProjected = !row && rows.length > 0;
+  const displayRow = useMemo(() => {
+    if (row) {
+      // Apply schedule filtering to actual data too
+      // Input data = "monthly recurring base costs", schedule determines which months they apply
+      if (scheduleHook) {
+        const month = viewMonth || row.date;
+        const filtered = { ...row };
+        const allKeys = [...INCOME_KEYS, ...EXPENSE_KEYS, ...customExpenseKeys, ...customIncomeKeys];
+        for (const k of allKeys) {
+          if (!scheduleHook.isActiveInMonth(k, month)) {
+            filtered[k] = 0;
+          } else {
+            // Apply extra/future/bonus adjustments to actual data as well
+            filtered[k] = (filtered[k] || 0) + scheduleHook.getExtraAmount(k, month);
+            filtered[k] += scheduleHook.getFutureAmountDiff(k, month);
+            filtered[k] += scheduleHook.getBonusAmount(k, month);
+          }
+        }
+        return filtered;
+      }
+      return row;
+    }
+    if (rows.length === 0) return null;
+
+    // Use average of last 3 months as base
+    const recent = rows.slice(-3);
+    const allKeys = [...INCOME_KEYS, ...EXPENSE_KEYS, ...customExpenseKeys, ...customIncomeKeys];
+    const projected = { date: viewMonth };
+
+    for (const k of allKeys) {
+      const vals = recent.map(r => r[k] || 0);
+      const avg = Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+      if (scheduleHook && !scheduleHook.isActiveInMonth(k, viewMonth)) {
+        projected[k] = 0;
+      } else {
+        projected[k] = avg;
+      }
+      if (scheduleHook) {
+        projected[k] += scheduleHook.getExtraAmount(k, viewMonth);
+        projected[k] += scheduleHook.getFutureAmountDiff(k, viewMonth);
+        projected[k] += scheduleHook.getBonusAmount(k, viewMonth);
+      }
+    }
+
+    // Project balance
+    const latest = rows[rows.length - 1];
+    let balHokyo = latest.balanceHokyo || 0;
+    let balRakuten = latest.balanceRakuten || 0;
+    const latestDate = latest.date;
+
+    const [ly, lm] = latestDate.split('-').map(Number);
+    const [vy, vm] = viewMonth.split('-').map(Number);
+    const monthsBetween = (vy - ly) * 12 + (vm - lm);
+
+    if (monthsBetween > 0) {
+      for (let i = 1; i <= monthsBetween; i++) {
+        const d = addMonths(latestDate, i);
+        let monthInc = 0, monthExp = 0;
+        for (const k of [...INCOME_KEYS, ...customIncomeKeys]) {
+          const vals = recent.map(r => r[k] || 0);
+          let v = Math.round(vals.reduce((s, val) => s + val, 0) / vals.length);
+          if (scheduleHook) {
+            if (!scheduleHook.isActiveInMonth(k, d)) v = 0;
+            else {
+              v += scheduleHook.getExtraAmount(k, d);
+              v += scheduleHook.getFutureAmountDiff(k, d);
+              v += scheduleHook.getBonusAmount(k, d);
+            }
+          }
+          monthInc += v;
+        }
+        for (const k of [...EXPENSE_KEYS, ...customExpenseKeys]) {
+          const vals = recent.map(r => r[k] || 0);
+          let v = Math.round(vals.reduce((s, val) => s + val, 0) / vals.length);
+          if (scheduleHook) {
+            if (!scheduleHook.isActiveInMonth(k, d)) v = 0;
+            else v += scheduleHook.getExtraAmount(k, d);
+          }
+          monthExp += v;
+        }
+        balHokyo += monthInc - monthExp;
+      }
+    }
+    projected.balanceHokyo = balHokyo;
+    projected.balanceRakuten = balRakuten;
+
+    return projected;
+  }, [row, rows, viewMonth, customExpenseKeys, customIncomeKeys, scheduleHook?.schedule]);
+
+  // No data at all
+  if (!row && rows.length === 0) {
     return (
       <div className="fade-in">
         <Header onSettings={onSettings} />
@@ -581,20 +829,23 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
     );
   }
 
-  const inc = totalIncome(row, customIncomeKeys);
-  const exp = totalExpense(row, customExpenseKeys);
-  const sur = surplus(row, customExpenseKeys, customIncomeKeys);
+  const r = displayRow;
+  if (!r) return null;
+
+  const inc = totalIncome(r, customIncomeKeys);
+  const exp = totalExpense(r, customExpenseKeys);
+  const sur = surplus(r, customExpenseKeys, customIncomeKeys);
 
   // Build grouped data (only visible keys)
   const groupedKeys = new Set(groups.flatMap(g => g.keys));
   const ungroupedItems = catConfig.expense
-    .filter(k => !groupedKeys.has(k) && (row[k] || 0) > 0)
-    .map(k => ({ key: k, label: labels[k] || k, amount: row[k] || 0 }));
+    .filter(k => !groupedKeys.has(k) && (r[k] || 0) > 0)
+    .map(k => ({ key: k, label: labels[k] || k, amount: r[k] || 0 }));
 
   const groupData = groups.map((g, gi) => {
     const children = g.keys
       .filter(k => visibleExpense.has(k))
-      .map(k => ({ key: k, label: labels[k] || k, amount: row[k] || 0 }))
+      .map(k => ({ key: k, label: labels[k] || k, amount: r[k] || 0 }))
       .filter(c => c.amount > 0);
     const total = children.reduce((s, c) => s + c.amount, 0);
     return { ...g, children, total, colorIdx: gi };
@@ -612,9 +863,9 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
           <span className="header-brand">Money Flow</span>
           <div className="header-actions">
             <div className="month-nav">
-              <button onClick={prevMonth} disabled={currentIdx === 0}>&lt;</button>
-              <span className="current-month">{formatMonth(row.date)}</span>
-              <button onClick={nextMonth} disabled={currentIdx === rows.length - 1}>&gt;</button>
+              <button onClick={prevMonth}>&lt;</button>
+              <span className="current-month">{formatMonth(viewMonth)}</span>
+              <button onClick={nextMonth}>&gt;</button>
             </div>
             <button className="settings-pill" onClick={onSettings}>
               <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -626,8 +877,17 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
         </div>
       </div>
 
+      {isProjected && (
+        <div className="projected-banner">
+          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+          </svg>
+          予測データ（直近3ヶ月の平均から算出）
+        </div>
+      )}
+
       <div className="hero">
-        <div className="hero-label">Monthly Balance</div>
+        <div className="hero-label">{isProjected ? 'Projected Balance' : 'Monthly Balance'}</div>
         <div className={`hero-amount ${sur >= 0 ? 'positive' : 'negative'}`}>
           {sur >= 0 ? '+' : ''}{formatYen(sur)}
         </div>
@@ -640,11 +900,11 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
       <div className="card-grid">
         <div className="card">
           <div className="card-label">北洋銀行</div>
-          <div className="card-amount">{formatYen(row.balanceHokyo)}</div>
+          <div className="card-amount">{formatYen(r.balanceHokyo)}</div>
         </div>
         <div className="card">
           <div className="card-label">楽天銀行</div>
-          <div className="card-amount">{formatYen(row.balanceRakuten)}</div>
+          <div className="card-amount">{formatYen(r.balanceRakuten)}</div>
         </div>
       </div>
 
@@ -652,7 +912,7 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
         <div className="section-title">Income</div>
         <div className="card">
           {catConfig.income.map(k => {
-            const v = row[k] || 0;
+            const v = r[k] || 0;
             if (v === 0) return null;
             return (
               <div key={k} className="stat-row">
@@ -661,7 +921,7 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
               </div>
             );
           })}
-          {catConfig.income.every(k => !row[k]) && (
+          {catConfig.income.every(k => !r[k]) && (
             <div style={{ padding: '8px 0', fontSize: 13, color: 'var(--text-muted)' }}>収入データなし</div>
           )}
         </div>
@@ -720,7 +980,7 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
                 <div className="group-children">
                   {g.children.map(c => (
                     <div key={c.key} className="group-child"
-                      onClick={() => onEdit({ key: c.key, label: c.label, value: c.amount, rowNum: row.rowNum })}>
+                      onClick={() => !isProjected && onEdit({ key: c.key, label: c.label, value: c.amount, rowNum: r.rowNum })}>
                       <span className="group-child-label">{c.label}</span>
                       <span className="group-child-amount">{formatYen(c.amount)}</span>
                     </div>
@@ -732,7 +992,7 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
 
           {ungroupedItems.map(e => (
             <div key={e.key} className="expense-bar-item"
-              onClick={() => onEdit({ key: e.key, label: e.label, value: e.amount, rowNum: row.rowNum })}>
+              onClick={() => !isProjected && onEdit({ key: e.key, label: e.label, value: e.amount, rowNum: r.rowNum })}>
               <div className="expense-bar-item-top">
                 <span className="label">{e.label}</span>
                 <span className="amount">{formatYen(e.amount)}</span>
@@ -751,10 +1011,10 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
         </div>
       </div>
 
-      {row.notes && (
+      {r.notes && (
         <div className="section">
           <div className="section-title">Notes</div>
-          <div className="card" style={{ padding: 14, fontSize: 13, color: 'var(--text-secondary)' }}>{row.notes}</div>
+          <div className="card" style={{ padding: 14, fontSize: 13, color: 'var(--text-secondary)' }}>{r.notes}</div>
         </div>
       )}
     </div>
@@ -813,7 +1073,7 @@ function HistoryView({ rows, onSelect, customExpenseKeys = [], customIncomeKeys 
 }
 
 // ── Input View ──
-function InputView({ row, rows, labels, catConfig, groups, customExpenseKeys, customIncomeKeys, onSave, onAdd, saving, onSettings, onNewCategory }) {
+function InputView({ row, rows, labels, catConfig, groups, customExpenseKeys, customIncomeKeys, onSave, onAdd, saving, onNewCategory, onUpdateLabel, catActions, customCats, onUpdateGroups, scheduleHook }) {
   const initial = row || {};
   const allIncomeKeys = [...INCOME_KEYS, ...customIncomeKeys];
   const allExpenseKeys = [...EXPENSE_KEYS, ...customExpenseKeys];
@@ -835,6 +1095,12 @@ function InputView({ row, rows, labels, catConfig, groups, customExpenseKeys, cu
     groups.forEach(g => { init[g.id] = true; });
     return init;
   });
+  const [editMode, setEditMode] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [crossDrag, setCrossDrag] = useState(null); // { key, sourceGroupId } for cross-group drag
+  const [dropTarget, setDropTarget] = useState(null); // groupId being hovered
+  const crossDragY = useRef(0);
+  const groupRefs = useRef({}); // refs for each group drop zone
 
   useEffect(() => { if (row) setForm(buildForm(row)); }, [row]);
 
@@ -850,22 +1116,460 @@ function InputView({ row, rows, labels, catConfig, groups, customExpenseKeys, cu
     }
   };
 
-  // Build grouped expense keys
+  // Delete handler: custom keys are fully removed, built-in keys are just hidden
+  const handleDeleteKey = (type, k) => {
+    haptic.medium();
+    if (isCustomKey(k)) {
+      customCats.remove(k);
+      onUpdateGroups(groups.map(g => ({ ...g, keys: g.keys.filter(gk => gk !== k) })));
+    }
+    catActions.hide(type, k);
+  };
+
+  // Cross-group drag handlers
+  const findGroupAtY = (clientY) => {
+    for (const [gId, el] of Object.entries(groupRefs.current)) {
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      if (clientY >= rect.top && clientY <= rect.bottom) return gId;
+    }
+    return null;
+  };
+
+  const startCrossDrag = (key, sourceGroupId, e) => {
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    crossDragY.current = clientY;
+    setCrossDrag({ key, sourceGroupId });
+    haptic.medium();
+  };
+
+  useEffect(() => {
+    if (!crossDrag) return;
+    const onMove = (e) => {
+      e.preventDefault();
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const target = findGroupAtY(clientY);
+      setDropTarget(target);
+    };
+    const onEnd = () => {
+      if (crossDrag && dropTarget && dropTarget !== crossDrag.sourceGroupId) {
+        haptic.heavy();
+        if (dropTarget === '_ungrouped') {
+          // Remove from all groups
+          onUpdateGroups(groups.map(g => ({ ...g, keys: g.keys.filter(k => k !== crossDrag.key) })));
+        } else {
+          // Move to target group
+          onUpdateGroups(groups.map(g => {
+            const without = g.keys.filter(k => k !== crossDrag.key);
+            if (g.id === dropTarget) return { ...g, keys: [...without, crossDrag.key] };
+            return { ...g, keys: without };
+          }));
+        }
+      } else {
+        haptic.light();
+      }
+      setCrossDrag(null);
+      setDropTarget(null);
+    };
+    const opts = { passive: false };
+    document.addEventListener('touchmove', onMove, opts);
+    document.addEventListener('touchend', onEnd);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onEnd);
+    return () => {
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onEnd);
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onEnd);
+    };
+  }, [crossDrag, dropTarget, groups, onUpdateGroups]);
+
+  // Add group
+  const addGroup = () => {
+    if (!newGroupName.trim()) return;
+    haptic.success();
+    const id = 'g_' + Date.now();
+    onUpdateGroups([...groups, { id, name: newGroupName.trim(), keys: [] }]);
+    setNewGroupName('');
+    setOpenGroups(prev => ({ ...prev, [id]: true }));
+  };
+  const deleteGroup = (id) => { haptic.medium(); onUpdateGroups(groups.filter(g => g.id !== id)); };
+  const renameGroup = (id, name) => onUpdateGroups(groups.map(g => g.id === id ? { ...g, name } : g));
+
+  // Visible / grouped keys
   const visibleExpense = new Set(catConfig.expense);
   const groupedKeys = new Set(groups.flatMap(g => g.keys));
   const ungroupedKeys = catConfig.expense.filter(k => !groupedKeys.has(k));
 
+  // Label helper
+  const getLabel = (k) => labels[k] != null ? labels[k] : (EXPENSE_LABELS[k] ?? INCOME_LABELS[k] ?? k);
+
+  // Month name helper
+  const monthName = (m) => m ? `${m}月` : '';
+
+  // Badges for normal mode
+  const renderScheduleBadges = (k) => {
+    const s = scheduleHook.get(k);
+    if (!s || (!s.endDate && !s.seasonStart && !s.extraAmount && !s.futureAmount)) return null;
+    const badges = [];
+    if (s.endDate) {
+      const [y, m] = s.endDate.split('-');
+      const isPast = s.endDate < currentMonth();
+      badges.push(<span key="end" className={`sched-badge ${isPast ? 'sched-badge-past' : ''}`}>〜{Number(y)}/{Number(m)}</span>);
+    }
+    if (s.seasonStart && s.seasonEnd) {
+      badges.push(<span key="season" className="sched-badge sched-badge-season">{monthName(s.seasonStart)}〜{monthName(s.seasonEnd)}</span>);
+    }
+    if (s.extraAmount && s.extraStart && s.extraEnd) {
+      badges.push(<span key="extra" className="sched-badge sched-badge-extra">+{formatYen(s.extraAmount)} {monthName(s.extraStart)}〜{monthName(s.extraEnd)}</span>);
+    }
+    if (s.futureAmount && s.currentAmount && s.futureStart) {
+      const diff = s.futureAmount - s.currentAmount;
+      const [y, m] = s.futureStart.split('-');
+      const isApplied = currentMonth() >= s.futureStart;
+      badges.push(
+        <span key="future" className={`sched-badge sched-badge-future ${isApplied ? 'sched-badge-future-applied' : ''}`}>
+          {diff >= 0 ? '+' : ''}{formatYen(diff)} {Number(y)}/{Number(m)}〜
+        </span>
+      );
+    }
+    return <span className="sched-badges">{badges}</span>;
+  };
+
+  // Month selector component
+  const MonthSelect = ({ value, onChange, placeholder }) => (
+    <select className="sched-month-select" value={value || ''} onChange={e => onChange(e.target.value ? Number(e.target.value) : null)}>
+      <option value="">{placeholder || '---'}</option>
+      {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <option key={m} value={m}>{m}月</option>)}
+    </select>
+  );
+
+  // Schedule editor for edit mode
+  const [openSchedule, setOpenSchedule] = useState({});
+  const isIncomeKey = (k) => catConfig.income.includes(k);
+
+  const renderScheduleEditor = (k) => {
+    const s = scheduleHook.get(k);
+    const isOpen = openSchedule[k];
+    const hasAny = s.endDate || s.seasonStart || s.extraAmount || s.futureAmount;
+    const isIncome = isIncomeKey(k);
+
+    const labelEnd = isIncome ? '収入終了月' : '支払い終了月';
+    const labelExtra = isIncome ? '追加収入額' : '季節加算額';
+    const labelExtraPeriod = isIncome ? '追加収入期間' : '加算期間';
+
+    return (
+      <div className="sched-editor">
+        <button className={`sched-toggle ${hasAny ? 'sched-toggle-active' : ''}`}
+          onClick={() => setOpenSchedule(prev => ({ ...prev, [k]: !prev[k] }))}>
+          <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 4h10M5 11h14M5 15h14M5 19h14" />
+          </svg>
+          スケジュール
+          {hasAny && <span className="sched-dot" />}
+          <svg className={`sched-chevron ${isOpen ? 'open' : ''}`} width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {isOpen && (
+          <div className="sched-fields">
+            <div className="sched-row">
+              <span className="sched-label">{labelEnd}</span>
+              <input type="month" className="sched-month-input" value={s.endDate || ''}
+                onChange={e => scheduleHook.update(k, 'endDate', e.target.value || null)} />
+            </div>
+
+            <div className="sched-row">
+              <span className="sched-label">毎年の発生期間</span>
+              <div className="sched-range">
+                <MonthSelect value={s.seasonStart} onChange={v => scheduleHook.update(k, 'seasonStart', v)} placeholder="開始" />
+                <span className="sched-range-sep">〜</span>
+                <MonthSelect value={s.seasonEnd} onChange={v => scheduleHook.update(k, 'seasonEnd', v)} placeholder="終了" />
+              </div>
+            </div>
+
+            <div className="sched-row">
+              <span className="sched-label">{labelExtra}</span>
+              <input type="number" inputMode="numeric" className="sched-amount-input" placeholder="0"
+                value={s.extraAmount || ''} onChange={e => scheduleHook.update(k, 'extraAmount', e.target.value ? Number(e.target.value) : null)} />
+            </div>
+            {(s.extraAmount > 0) && (
+              <div className="sched-row">
+                <span className="sched-label">{labelExtraPeriod}</span>
+                <div className="sched-range">
+                  <MonthSelect value={s.extraStart} onChange={v => scheduleHook.update(k, 'extraStart', v)} placeholder="開始" />
+                  <span className="sched-range-sep">〜</span>
+                  <MonthSelect value={s.extraEnd} onChange={v => scheduleHook.update(k, 'extraEnd', v)} placeholder="終了" />
+                </div>
+              </div>
+            )}
+
+            {/* 将来の金額変更（Income向け） */}
+            {isIncome && (
+              <>
+                <div className="sched-divider" />
+                <div className="sched-section-label">
+                  <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                  </svg>
+                  金額変更予定
+                </div>
+                <div className="sched-row">
+                  <span className="sched-label">現在の金額</span>
+                  <input type="number" inputMode="numeric" className="sched-amount-input" placeholder="0"
+                    value={s.currentAmount || ''} onChange={e => scheduleHook.update(k, 'currentAmount', e.target.value ? Number(e.target.value) : null)} />
+                </div>
+                <div className="sched-row">
+                  <span className="sched-label">変更後の金額</span>
+                  <input type="number" inputMode="numeric" className="sched-amount-input" placeholder="0"
+                    value={s.futureAmount || ''} onChange={e => scheduleHook.update(k, 'futureAmount', e.target.value ? Number(e.target.value) : null)} />
+                </div>
+                {(s.futureAmount > 0) && (
+                  <div className="sched-row">
+                    <span className="sched-label">適用開始月</span>
+                    <input type="month" className="sched-month-input" value={s.futureStart || ''}
+                      onChange={e => scheduleHook.update(k, 'futureStart', e.target.value || null)} />
+                  </div>
+                )}
+                {(s.futureAmount > 0 && s.currentAmount > 0 && s.futureStart) && (
+                  <div className="sched-future-preview">
+                    {s.futureAmount >= s.currentAmount ? '+' : ''}{formatYen(s.futureAmount - s.currentAmount)}
+                    {' '}
+                    {(() => { const [y, m] = s.futureStart.split('-'); return `${Number(y)}年${Number(m)}月から`; })()}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── EDIT MODE ──
+  if (editMode) {
+    return (
+      <div className="fade-in">
+        <div className="header">
+          <div className="header-top">
+            <span className="header-brand">Money Flow</span>
+            <button className="settings-pill" onClick={() => { haptic.light(); setEditMode(false); }}>
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              完了
+            </button>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 15, fontWeight: 700 }}>{formatMonth(form.date)}</div>
+        </div>
+
+        <div className="section">
+          {/* ── Income Edit ── */}
+          <div className="section-title">Income</div>
+          <div className="form-card">
+            <DragList
+              items={catConfig.income}
+              onReorder={(from, to) => catActions.reorder('income', from, to)}
+              renderItem={(k) => (
+                <div className="cat-edit-item-wrap">
+                  <div className="cat-edit-item-top">
+                    <input className="cat-item-input" value={getLabel(k)}
+                      onChange={e => onUpdateLabel(k, e.target.value)} />
+                    <button className="cat-item-delete" onClick={() => handleDeleteKey('income', k)}>
+                      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  {renderScheduleEditor(k)}
+                </div>
+              )}
+            />
+            <button className="group-inline-add-btn" style={{ marginTop: 8 }} onClick={() => onNewCategory('income')}>
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              カテゴリを追加
+            </button>
+          </div>
+
+          {/* ── Expenses Edit ── */}
+          <div className="section-title">Expenses</div>
+          {crossDrag && (
+            <div className="cross-drag-hint">
+              「{getLabel(crossDrag.key)}」をドラッグ中 — 移動先のグループへドロップ
+            </div>
+          )}
+
+          {groups.map(g => {
+            const gKeys = g.keys.filter(k => visibleExpense.has(k));
+            const isOpen = openGroups[g.id] !== false;
+            const isDropHover = crossDrag && dropTarget === g.id && crossDrag.sourceGroupId !== g.id;
+
+            return (
+              <div key={g.id}
+                ref={el => { groupRefs.current[g.id] = el; }}
+                className={`form-card form-card-group ${isDropHover ? 'drop-highlight' : ''}`}>
+                <div className="form-group-header" onClick={() => toggleInputGroup(g.id)}>
+                  <div className="form-group-header-left" style={{ flex: 1 }}>
+                    <input className="edit-group-name-input" value={g.name}
+                      onChange={e => renameGroup(g.id, e.target.value)}
+                      onClick={e => e.stopPropagation()} />
+                  </div>
+                  <button className="cat-item-delete" style={{ marginRight: 8 }}
+                    onClick={(e) => { e.stopPropagation(); if (confirm(`グループ「${g.name}」を削除しますか？`)) deleteGroup(g.id); }}>
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                  <svg className={`group-chevron ${isOpen ? 'open' : ''}`}
+                    width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+                {isOpen && (
+                  <DragList
+                    items={gKeys}
+                    onReorder={(from, to) => {
+                      const newKeys = [...gKeys];
+                      const [item] = newKeys.splice(from, 1);
+                      newKeys.splice(to, 0, item);
+                      onUpdateGroups(groups.map(gg =>
+                        gg.id === g.id ? { ...gg, keys: [...newKeys, ...gg.keys.filter(k => !visibleExpense.has(k))] } : gg
+                      ));
+                    }}
+                    renderItem={(k) => (
+                      <div className="cat-edit-item-wrap">
+                        <div className="cat-edit-item-top">
+                          <input className="cat-item-input" value={getLabel(k)}
+                            onChange={e => onUpdateLabel(k, e.target.value)} />
+                          <div className="cat-cross-drag-handle"
+                            onTouchStart={e => startCrossDrag(k, g.id, e)}
+                            onMouseDown={e => startCrossDrag(k, g.id, e)}
+                            title="グループ間移動">
+                            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 4v12m0 0l4-4m-4 4l-4-4M16 12H4m0 0l4-4m-4 4l4 4m8-4h8m0 0l-4-4m4 4l-4 4" />
+                            </svg>
+                          </div>
+                          <button className="cat-item-delete" onClick={() => handleDeleteKey('expense', k)}>
+                            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                        {renderScheduleEditor(k)}
+                      </div>
+                    )}
+                  />
+                )}
+                {gKeys.length === 0 && isOpen && (
+                  <div className="drop-empty-hint">ここにカテゴリをドロップ</div>
+                )}
+                {isOpen && (
+                  <button className="group-inline-add-btn" style={{ marginTop: 6 }}
+                    onClick={(e) => { e.stopPropagation(); onNewCategory('expense', g.id); }}>
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                    カテゴリを追加
+                  </button>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Ungrouped */}
+          <div
+            ref={el => { groupRefs.current['_ungrouped'] = el; }}
+            className={`form-card ${crossDrag && dropTarget === '_ungrouped' && crossDrag.sourceGroupId !== '_ungrouped' ? 'drop-highlight' : ''}`}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8 }}>未分類</div>
+            {ungroupedKeys.length > 0 ? (
+              <DragList
+                items={ungroupedKeys}
+                onReorder={(from, to) => catActions.reorder('expense', catConfig.expense.indexOf(ungroupedKeys[from]), catConfig.expense.indexOf(ungroupedKeys[to]))}
+                renderItem={(k) => (
+                  <div className="cat-edit-item-wrap">
+                    <div className="cat-edit-item-top">
+                      <input className="cat-item-input" value={getLabel(k)}
+                        onChange={e => onUpdateLabel(k, e.target.value)} />
+                      <div className="cat-cross-drag-handle"
+                        onTouchStart={e => startCrossDrag(k, '_ungrouped', e)}
+                        onMouseDown={e => startCrossDrag(k, '_ungrouped', e)}
+                        title="グループ間移動">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 4v12m0 0l4-4m-4 4l-4-4M16 12H4m0 0l4-4m-4 4l4 4m8-4h8m0 0l-4-4m4 4l-4 4" />
+                        </svg>
+                      </div>
+                      <button className="cat-item-delete" onClick={() => handleDeleteKey('expense', k)}>
+                        <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    {renderScheduleEditor(k)}
+                  </div>
+                )}
+              />
+            ) : (
+              <div className="drop-empty-hint">ここにカテゴリをドロップ</div>
+            )}
+          </div>
+
+          <button className="new-cat-btn" style={{ marginBottom: 8 }} onClick={() => onNewCategory('expense')}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            カテゴリを追加（未分類）
+          </button>
+
+          {/* Add Group */}
+          <div className="add-group-section">
+            <div className="add-group-label">
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+              新しいグループを作成
+            </div>
+            <div className="add-group-input-wrap">
+              <input className="add-group-input"
+                placeholder="グループ名（例：サブスク、交際費…）"
+                value={newGroupName} onChange={e => setNewGroupName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && newGroupName.trim()) addGroup(); }} />
+            </div>
+            {newGroupName.trim() && (
+              <button className="add-group-btn" onClick={addGroup}>
+                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                「{newGroupName.trim()}」を追加
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── NORMAL MODE ──
   return (
     <div className="fade-in">
       <div className="header">
         <div className="header-top">
           <span className="header-brand">Money Flow</span>
-          <button className="settings-pill" onClick={onSettings}>
-            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-            </svg>
-            設定
-          </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="header-save-btn" disabled={saving} onClick={handleSubmit}>
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              {saving ? '保存中...' : '保存'}
+            </button>
+            <button className="settings-pill" onClick={() => { haptic.light(); setEditMode(true); }}>
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+              編集
+            </button>
+          </div>
         </div>
         <div style={{ marginTop: 6, fontSize: 15, fontWeight: 700 }}>{formatMonth(form.date)}</div>
       </div>
@@ -875,7 +1579,7 @@ function InputView({ row, rows, labels, catConfig, groups, customExpenseKeys, cu
         <div className="form-card">
           {catConfig.income.map(k => (
             <div key={k} className="form-group">
-              <label className="form-label">{labels[k] || INCOME_LABELS[k] || k}</label>
+              <label className="form-label">{getLabel(k)} {renderScheduleBadges(k)}</label>
               <NumInput value={form[k]} onChange={v => set(k, v)} />
             </div>
           ))}
@@ -901,12 +1605,22 @@ function InputView({ row, rows, labels, catConfig, groups, customExpenseKeys, cu
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                 </svg>
               </div>
-              {isOpen && gKeys.map(k => (
-                <div key={k} className="form-group">
-                  <label className="form-label">{labels[k] || EXPENSE_LABELS[k] || k}</label>
-                  <NumInput value={form[k]} onChange={v => set(k, v)} />
-                </div>
-              ))}
+              {isOpen && (
+                <>
+                  {gKeys.map(k => (
+                    <div key={k} className="form-group">
+                      <label className="form-label">{getLabel(k)} {renderScheduleBadges(k)}</label>
+                      <NumInput value={form[k]} onChange={v => set(k, v)} />
+                    </div>
+                  ))}
+                  <button className="group-inline-add-btn" onClick={(e) => { e.stopPropagation(); onNewCategory('expense', g.id); }}>
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                    カテゴリを追加
+                  </button>
+                </>
+              )}
             </div>
           );
         })}
@@ -915,19 +1629,12 @@ function InputView({ row, rows, labels, catConfig, groups, customExpenseKeys, cu
           <div className="form-card">
             {ungroupedKeys.map(k => (
               <div key={k} className="form-group">
-                <label className="form-label">{labels[k] || EXPENSE_LABELS[k] || k}</label>
+                <label className="form-label">{getLabel(k)} {renderScheduleBadges(k)}</label>
                 <NumInput value={form[k]} onChange={v => set(k, v)} />
               </div>
             ))}
           </div>
         )}
-
-        <button className="new-cat-btn" style={{ marginBottom: 12 }} onClick={onNewCategory}>
-          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          新規カテゴリを追加
-        </button>
 
         <div className="section-title">Balance & Notes</div>
         <div className="form-card">
@@ -955,7 +1662,7 @@ function InputView({ row, rows, labels, catConfig, groups, customExpenseKeys, cu
 }
 
 // ── Forecast View ──
-function ForecastView({ rows, labels, customExpenseKeys = [], customIncomeKeys = [] }) {
+function ForecastView({ rows, labels, customExpenseKeys = [], customIncomeKeys = [], scheduleHook, catConfig }) {
   const recent = rows.slice(-3);
   const defaultIncome = recent.length > 0
     ? Math.round(recent.reduce((s, r) => s + totalIncome(r, customIncomeKeys), 0) / recent.length) : 200000;
@@ -971,6 +1678,30 @@ function ForecastView({ rows, labels, customExpenseKeys = [], customIncomeKeys =
   const incomeDiff = simIncome - defaultIncome;
   const expenseDiff = simExpense - defaultExpense;
 
+  // Per-category average expense (for end date calculation)
+  const categoryAvg = useMemo(() => {
+    if (recent.length === 0) return {};
+    const allKeys = [...EXPENSE_KEYS, ...customExpenseKeys];
+    const avg = {};
+    for (const k of allKeys) {
+      const total = recent.reduce((s, r) => s + (r[k] || 0), 0);
+      if (total > 0) avg[k] = Math.round(total / recent.length);
+    }
+    return avg;
+  }, [recent, customExpenseKeys]);
+
+  // Per-category average income (for schedule calculation)
+  const incomeCategoryAvg = useMemo(() => {
+    if (recent.length === 0) return {};
+    const allKeys = [...INCOME_KEYS, ...customIncomeKeys];
+    const avg = {};
+    for (const k of allKeys) {
+      const total = recent.reduce((s, r) => s + (r[k] || 0), 0);
+      if (total > 0) avg[k] = Math.round(total / recent.length);
+    }
+    return avg;
+  }, [recent, customIncomeKeys]);
+
   const projection = useMemo(() => {
     if (rows.length === 0) return [];
     const latest = rows[rows.length - 1];
@@ -981,23 +1712,50 @@ function ForecastView({ rows, labels, customExpenseKeys = [], customIncomeKeys =
 
     for (let i = 1; i <= 12; i++) {
       const date = addMonths(latest.date, i);
-      const adjSurplus = simIncome - simExpense;
-      const curSurplus = defaultIncome - defaultExpense;
+      // Calculate adjustments from schedule (end dates, seasons, extras)
+      let adjustment = 0;
+      let incomeAdjustment = 0;
+      if (scheduleHook) {
+        // Expense schedule adjustments
+        for (const [key, avg] of Object.entries(categoryAvg)) {
+          if (!scheduleHook.isActiveInMonth(key, date)) {
+            adjustment -= avg;
+          }
+          adjustment += scheduleHook.getExtraAmount(key, date);
+        }
+        // Income schedule adjustments
+        for (const [key, avg] of Object.entries(incomeCategoryAvg)) {
+          if (!scheduleHook.isActiveInMonth(key, date)) {
+            incomeAdjustment -= avg;
+          }
+          incomeAdjustment += scheduleHook.getExtraAmount(key, date);
+          incomeAdjustment += scheduleHook.getFutureAmountDiff(key, date);
+          incomeAdjustment += scheduleHook.getBonusAmount(key, date);
+        }
+      }
+      const adjExpense = simExpense + adjustment;
+      const curExpense = defaultExpense + adjustment;
+      const adjIncome = simIncome + incomeAdjustment;
+      const curIncome = defaultIncome + incomeAdjustment;
+      const adjSurplus = adjIncome - adjExpense;
+      const curSurplus = curIncome - curExpense;
       adjBal += adjSurplus;
       curBal += curSurplus;
       result.push({
         date,
         label: formatShortMonth(date),
         fullLabel: formatMonth(date),
-        income: simIncome,
-        expense: simExpense,
+        income: adjIncome,
+        expense: adjExpense,
         surplus: adjSurplus,
         balance: adjBal,
         currentBalance: curBal,
+        adjustment,
+        incomeAdjustment,
       });
     }
     return result;
-  }, [rows, simIncome, simExpense, defaultIncome, defaultExpense]);
+  }, [rows, simIncome, simExpense, defaultIncome, defaultExpense, scheduleHook?.schedule, categoryAvg, incomeCategoryAvg]);
 
   const monthlySurplus = simIncome - simExpense;
   const yearSavings = monthlySurplus * 12;
@@ -1096,6 +1854,156 @@ function ForecastView({ rows, labels, customExpenseKeys = [], customIncomeKeys =
         </div>
       </div>
 
+      {/* Income Future Amount Settings */}
+      {catConfig && scheduleHook && (() => {
+        const latest = rows.length > 0 ? rows[rows.length - 1] : {};
+        // Salary-type keys: built-in income keys that have data
+        const salaryKeys = (catConfig.income || []).filter(k => INCOME_KEYS.includes(k));
+        // Bonus-type keys: custom income keys (ci_*)
+        const bonusKeys = (catConfig.income || []).filter(k => !INCOME_KEYS.includes(k));
+
+        // Generate future month options (next 24 months)
+        const futureMonths = [];
+        if (rows.length > 0) {
+          for (let i = 1; i <= 24; i++) {
+            const d = addMonths(latest.date, i);
+            const [y, m] = d.split('-');
+            futureMonths.push({ value: d, label: `${Number(y)}年${Number(m)}月` });
+          }
+        }
+
+        return (
+          <div className="section">
+            <div className="section-title">Income Changes</div>
+
+            {/* Salary Raise Section */}
+            {salaryKeys.length > 0 && (
+              <div className="form-card" style={{ padding: '12px 14px' }}>
+                <div className="forecast-section-header">
+                  <svg width="14" height="14" fill="none" stroke="#059669" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                  </svg>
+                  昇給予定
+                </div>
+                {salaryKeys.map(k => {
+                  const s = scheduleHook.get(k);
+                  const lbl = labels[k] || k;
+                  const currentVal = incomeCategoryAvg[k] || latest[k] || 0;
+                  const futureVal = s.futureAmount || currentVal;
+                  const diff = futureVal - currentVal;
+                  const hasFuture = s.futureAmount && s.futureStart;
+
+                  return (
+                    <div key={k} className="forecast-income-item">
+                      <div className="forecast-income-header">
+                        <span className="forecast-income-name">{lbl}</span>
+                        {hasFuture && diff !== 0 && (
+                          <span className="sched-badge sched-badge-future" style={{ fontSize: 10 }}>
+                            {diff >= 0 ? '+' : ''}{formatYen(diff)}
+                            {' '}{(() => { const [y, m] = s.futureStart.split('-'); return `${Number(y)}/${Number(m)}〜`; })()}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Current amount (read-only) */}
+                      <div className="forecast-current-row">
+                        <span className="forecast-income-label">現在の金額</span>
+                        <span className="forecast-current-value">{formatYen(currentVal)}</span>
+                      </div>
+
+                      {/* Future amount with +/- buttons */}
+                      <div className="forecast-income-label" style={{ marginTop: 8, marginBottom: 4 }}>変更後の金額</div>
+                      <div className="forecast-stepper">
+                        <button className="forecast-stepper-btn" onClick={() => {
+                          haptic.tick();
+                          const next = Math.max(0, (s.futureAmount || currentVal) - 10000);
+                          scheduleHook.update(k, 'futureAmount', next);
+                          if (!s.currentAmount) scheduleHook.update(k, 'currentAmount', currentVal);
+                        }}>-1万</button>
+                        <input type="number" inputMode="numeric" className="forecast-stepper-input"
+                          value={s.futureAmount || ''}
+                          placeholder={String(currentVal)}
+                          onChange={e => {
+                            scheduleHook.update(k, 'futureAmount', e.target.value ? Number(e.target.value) : null);
+                            if (!s.currentAmount) scheduleHook.update(k, 'currentAmount', currentVal);
+                          }} />
+                        <button className="forecast-stepper-btn forecast-stepper-btn-plus" onClick={() => {
+                          haptic.tick();
+                          const next = (s.futureAmount || currentVal) + 10000;
+                          scheduleHook.update(k, 'futureAmount', next);
+                          if (!s.currentAmount) scheduleHook.update(k, 'currentAmount', currentVal);
+                        }}>+1万</button>
+                      </div>
+
+                      {/* Start month selector */}
+                      <div className="forecast-income-label" style={{ marginTop: 8, marginBottom: 4 }}>適用開始月</div>
+                      <select className="forecast-month-select" value={s.futureStart || ''}
+                        onChange={e => scheduleHook.update(k, 'futureStart', e.target.value || null)}>
+                        <option value="">選択してください</option>
+                        {futureMonths.map(fm => <option key={fm.value} value={fm.value}>{fm.label}</option>)}
+                      </select>
+
+                      {hasFuture && diff !== 0 && (
+                        <div className="sched-future-preview" style={{ marginTop: 8 }}>
+                          {formatYen(currentVal)} → {formatYen(futureVal)}
+                          （{diff >= 0 ? '+' : ''}{formatYen(diff)}）
+                          {(() => { const [y, m] = s.futureStart.split('-'); return ` ${Number(y)}年${Number(m)}月から`; })()}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Bonus Section */}
+            {bonusKeys.length > 0 && (
+              <div className="form-card" style={{ padding: '12px 14px', marginTop: 10 }}>
+                <div className="forecast-section-header">
+                  <svg width="14" height="14" fill="none" stroke="#d97706" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  ボーナス予定
+                </div>
+                {bonusKeys.map(k => {
+                  const s = scheduleHook.get(k);
+                  const lbl = labels[k] || k;
+                  return (
+                    <div key={k} className="forecast-income-item">
+                      <div className="forecast-income-header">
+                        <span className="forecast-income-name">{lbl}</span>
+                        {s.bonusAmount > 0 && s.bonusMonth && (
+                          <span className="sched-badge sched-badge-extra" style={{ fontSize: 10 }}>
+                            {formatYen(s.bonusAmount)}
+                            {' '}{(() => { const [y, m] = s.bonusMonth.split('-'); return `${Number(y)}/${Number(m)}`; })()}
+                          </span>
+                        )}
+                      </div>
+                      <div className="forecast-income-fields">
+                        <div className="forecast-income-field" style={{ flex: 1.2 }}>
+                          <span className="forecast-income-label">金額</span>
+                          <input type="number" inputMode="numeric" className="forecast-income-input"
+                            placeholder="0" value={s.bonusAmount || ''}
+                            onChange={e => scheduleHook.update(k, 'bonusAmount', e.target.value ? Number(e.target.value) : null)} />
+                        </div>
+                        <div className="forecast-income-field" style={{ flex: 1 }}>
+                          <span className="forecast-income-label">支給予定月</span>
+                          <select className="forecast-month-select" value={s.bonusMonth || ''}
+                            onChange={e => scheduleHook.update(k, 'bonusMonth', e.target.value || null)}>
+                            <option value="">選択</option>
+                            {futureMonths.map(fm => <option key={fm.value} value={fm.value}>{fm.label}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Projection Chart */}
       {projection.length > 0 && (
         <div className="section">
@@ -1187,9 +2095,9 @@ function EditModal({ item, onSave, onClose, saving }) {
 }
 
 // ── New Category Modal ──
-function NewCategoryModal({ type, groups, labels, catConfig, customCats, onAdd, onClose }) {
+function NewCategoryModal({ type, groups, labels, catConfig, customCats, onAdd, onClose, defaultGroupId }) {
   const [name, setName] = useState('');
-  const [groupId, setGroupId] = useState('');
+  const [groupId, setGroupId] = useState(defaultGroupId || '');
   const [mode, setMode] = useState('new'); // 'new' = create custom key, 'reuse' = unhide built-in
 
   // Hidden built-in keys
@@ -1198,14 +2106,17 @@ function NewCategoryModal({ type, groups, labels, catConfig, customCats, onAdd, 
   const hiddenBuiltin = builtinKeys.filter(k => !visible.includes(k));
   const [selectedBuiltin, setSelectedBuiltin] = useState(hiddenBuiltin[0] || '');
 
-  const canAddNew = customCats.canAdd;
-
   const handleAddNew = () => {
-    if (!name.trim()) return;
-    haptic.success();
-    const key = customCats.add(name.trim(), type);
-    onAdd(key, name.trim(), groupId || null);
-    onClose();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      haptic.success();
+      const key = customCats.add(trimmed, type);
+      onAdd(key, trimmed, groupId || null);
+      onClose();
+    } catch (e) {
+      alert('ERROR: ' + e.message);
+    }
   };
 
   const handleReuse = () => {
@@ -1224,7 +2135,7 @@ function NewCategoryModal({ type, groups, labels, catConfig, customCats, onAdd, 
         </div>
 
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-          {customCats.totalCount} / {MAX_CATEGORIES} カテゴリ使用中
+          {customCats.totalCount} カテゴリ使用中
         </div>
 
         {hiddenBuiltin.length > 0 && (
@@ -1238,42 +2149,33 @@ function NewCategoryModal({ type, groups, labels, catConfig, customCats, onAdd, 
 
         {mode === 'new' && (
           <>
-            {!canAddNew ? (
-              <div style={{ padding: '16px 0', color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.7 }}>
-                カテゴリ上限（{MAX_CATEGORIES}個）に達しています。<br />
-                不要なカテゴリを設定画面から削除してから追加してください。
+            <div className="form-group">
+              <label className="form-label">カテゴリ名</label>
+              <input className="form-input" placeholder="例: 医療費, 教育費..."
+                value={name} onChange={e => setName(e.target.value)} autoFocus />
+            </div>
+
+            {type === 'expense' && groups.length > 0 && (
+              <div className="form-group">
+                <label className="form-label">グループ（任意）</label>
+                <div className="new-cat-slots">
+                  <button className={`new-cat-slot ${groupId === '' ? 'active' : ''}`}
+                    onClick={() => { haptic.tick(); setGroupId(''); }}>なし</button>
+                  {groups.map(g => (
+                    <button key={g.id}
+                      className={`new-cat-slot ${groupId === g.id ? 'active' : ''}`}
+                      onClick={() => { haptic.tick(); setGroupId(g.id); }}>
+                      {g.name}
+                    </button>
+                  ))}
+                </div>
               </div>
-            ) : (
-              <>
-                <div className="form-group">
-                  <label className="form-label">カテゴリ名</label>
-                  <input className="form-input" placeholder="例: 医療費, 教育費..."
-                    value={name} onChange={e => setName(e.target.value)} autoFocus />
-                </div>
-
-                {type === 'expense' && groups.length > 0 && (
-                  <div className="form-group">
-                    <label className="form-label">グループ（任意）</label>
-                    <div className="new-cat-slots">
-                      <button className={`new-cat-slot ${groupId === '' ? 'active' : ''}`}
-                        onClick={() => { haptic.tick(); setGroupId(''); }}>なし</button>
-                      {groups.map(g => (
-                        <button key={g.id}
-                          className={`new-cat-slot ${groupId === g.id ? 'active' : ''}`}
-                          onClick={() => { haptic.tick(); setGroupId(g.id); }}>
-                          {g.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-                  <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>キャンセル</button>
-                  <button className="btn btn-primary" style={{ flex: 1 }} disabled={!name.trim()} onClick={handleAddNew}>追加する</button>
-                </div>
-              </>
             )}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>キャンセル</button>
+              <button className="btn btn-primary" style={{ flex: 1 }} disabled={!name.trim()} onClick={handleAddNew}>追加する</button>
+            </div>
           </>
         )}
 
@@ -1494,6 +2396,17 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
   };
   const assignedKeys = new Set(groups.flatMap(g => g.keys));
 
+  // Delete handler: custom keys are fully removed, built-in keys are just hidden
+  const handleDeleteKey = (type, k) => {
+    haptic.medium();
+    if (isCustomKey(k)) {
+      customCats.remove(k);
+      // Also remove from groups
+      onUpdateGroups(groups.map(g => ({ ...g, keys: g.keys.filter(gk => gk !== k) })));
+    }
+    catActions.hide(type, k);
+  };
+
   // Hidden categories (built-in only; custom keys are always visible or deleted entirely)
   const hiddenIncome = INCOME_KEYS.filter(k => !catConfig.income.includes(k));
   const allExpenseKeys = [...EXPENSE_KEYS, ...customCats.customExpenseKeys];
@@ -1516,9 +2429,9 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
           onReorder={(from, to) => catActions.reorder('income', from, to)}
           renderItem={(k) => (
             <>
-              <input className="cat-item-input" value={labels[k] || INCOME_LABELS[k] || k || ''}
+              <input className="cat-item-input" value={labels[k] != null ? labels[k] : (INCOME_LABELS[k] ?? '')}
                 onChange={e => onUpdate(k, e.target.value)} />
-              <button className="cat-item-delete" onClick={() => { haptic.medium(); catActions.hide('income', k); }}>
+              <button className="cat-item-delete" onClick={() => handleDeleteKey('income', k)}>
                 <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -1629,9 +2542,9 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
                         }}
                         renderItem={(k) => (
                           <>
-                            <input className="cat-item-input" value={labels[k] || EXPENSE_LABELS[k] || k || ''}
+                            <input className="cat-item-input" value={labels[k] != null ? labels[k] : (EXPENSE_LABELS[k] ?? '')}
                               onChange={e => onUpdate(k, e.target.value)} />
-                            <button className="cat-item-delete" onClick={() => { haptic.medium(); catActions.hide('expense', k); }}>
+                            <button className="cat-item-delete" onClick={() => handleDeleteKey('expense', k)}>
                               <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                               </svg>
@@ -1691,9 +2604,9 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
                         onReorder={(from, to) => catActions.reorder('expense', catConfig.expense.indexOf(ungrouped[from]), catConfig.expense.indexOf(ungrouped[to]))}
                         renderItem={(k) => (
                           <>
-                            <input className="cat-item-input" value={labels[k] || EXPENSE_LABELS[k] || k || ''}
+                            <input className="cat-item-input" value={labels[k] != null ? labels[k] : (EXPENSE_LABELS[k] ?? '')}
                               onChange={e => onUpdate(k, e.target.value)} />
-                            <button className="cat-item-delete" onClick={() => { haptic.medium(); catActions.hide('expense', k); }}>
+                            <button className="cat-item-delete" onClick={() => handleDeleteKey('expense', k)}>
                               <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                               </svg>
@@ -1711,7 +2624,7 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
-              新規カテゴリを追加（{customCats.totalCount}/{MAX_CATEGORIES}）
+              新規カテゴリを追加
             </button>
 
             <button className="btn btn-secondary" style={{ fontSize: 12, padding: '10px', marginTop: 16 }}
