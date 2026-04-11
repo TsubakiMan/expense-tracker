@@ -718,39 +718,36 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
   const toggleGroup = (id) => { haptic.light(); setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] })); };
 
   // Swipe navigation — works anywhere on the home screen
-  const swipeRef = useRef(null);
   const swipeStart = useRef(null);
   const swipeFired = useRef(false);
-  useEffect(() => {
-    const el = swipeRef.current;
-    if (!el) return;
-    const onStart = (e) => {
-      const t = e.touches[0];
-      swipeStart.current = { x: t.clientX, y: t.clientY };
-      swipeFired.current = false;
-    };
-    const onMove = (e) => {
-      if (!swipeStart.current || swipeFired.current) return;
-      const t = e.touches[0];
-      const dx = t.clientX - swipeStart.current.x;
-      const dy = t.clientY - swipeStart.current.y;
-      // Fire as soon as horizontal distance > 50px and more horizontal than vertical
-      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.2) {
-        swipeFired.current = true;
-        if (dx < 0) nextMonth();  // swipe left → next month
-        else prevMonth();          // swipe right → prev month
-      }
-    };
-    const onEnd = () => { swipeStart.current = null; };
-    el.addEventListener('touchstart', onStart, { passive: true });
-    el.addEventListener('touchmove', onMove, { passive: true });
-    el.addEventListener('touchend', onEnd, { passive: true });
-    return () => {
-      el.removeEventListener('touchstart', onStart);
-      el.removeEventListener('touchmove', onMove);
-      el.removeEventListener('touchend', onEnd);
-    };
-  }, [prevMonth, nextMonth]);
+  // Use refs for callbacks to avoid stale closures
+  const prevMonthRef = useRef(prevMonth);
+  const nextMonthRef = useRef(nextMonth);
+  prevMonthRef.current = prevMonth;
+  nextMonthRef.current = nextMonth;
+
+  const onSwipeTouchStart = useCallback((e) => {
+    const t = e.touches[0];
+    swipeStart.current = { x: t.clientX, y: t.clientY };
+    swipeFired.current = false;
+  }, []);
+
+  const onSwipeTouchMove = useCallback((e) => {
+    if (!swipeStart.current || swipeFired.current) return;
+    const t = e.touches[0];
+    const dx = t.clientX - swipeStart.current.x;
+    const dy = t.clientY - swipeStart.current.y;
+    // Require: horizontal > 40px and more horizontal than vertical
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) {
+      swipeFired.current = true;
+      if (dx < 0) nextMonthRef.current();   // swipe left → next month
+      else prevMonthRef.current();            // swipe right → prev month
+    }
+  }, []);
+
+  const onSwipeTouchEnd = useCallback(() => {
+    swipeStart.current = null;
+  }, []);
 
   // Build projected row for months without actual data (hook must be before any return)
   const isProjected = !row && rows.length > 0;
@@ -892,7 +889,10 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
   const maxGroupExp = Math.max(...groupData.map(g => g.total), ...ungroupedItems.map(u => u.amount), 1);
 
   return (
-    <div className="fade-in" ref={swipeRef}>
+    <div className="fade-in"
+      onTouchStart={onSwipeTouchStart}
+      onTouchMove={onSwipeTouchMove}
+      onTouchEnd={onSwipeTouchEnd}>
       <div className="header">
         <div className="header-top">
           <span className="header-brand">Money Flow</span>
