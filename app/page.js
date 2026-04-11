@@ -717,6 +717,37 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
 
   const toggleGroup = (id) => { haptic.light(); setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] })); };
 
+  // Swipe navigation
+  const swipeRef = useRef(null);
+  const swipeStart = useRef(null);
+  useEffect(() => {
+    const el = swipeRef.current;
+    if (!el) return;
+    const onStart = (e) => {
+      const t = e.touches[0];
+      swipeStart.current = { x: t.clientX, y: t.clientY, time: Date.now() };
+    };
+    const onEnd = (e) => {
+      if (!swipeStart.current) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - swipeStart.current.x;
+      const dy = t.clientY - swipeStart.current.y;
+      const dt = Date.now() - swipeStart.current.time;
+      swipeStart.current = null;
+      // Require: horizontal > 60px, mostly horizontal, within 400ms
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 400) {
+        if (dx < 0) nextMonth();  // swipe left → next month
+        else prevMonth();          // swipe right → prev month
+      }
+    };
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchend', onEnd, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchend', onEnd);
+    };
+  }, [prevMonth, nextMonth]);
+
   // Build projected row for months without actual data (hook must be before any return)
   const isProjected = !row && rows.length > 0;
   const displayRow = useMemo(() => {
@@ -857,7 +888,7 @@ function HomeView({ row, rows, labels, groups, catConfig, customExpenseKeys, cus
   const maxGroupExp = Math.max(...groupData.map(g => g.total), ...ungroupedItems.map(u => u.amount), 1);
 
   return (
-    <div className="fade-in">
+    <div className="fade-in" ref={swipeRef}>
       <div className="header">
         <div className="header-top">
           <span className="header-brand">Money Flow</span>
@@ -2386,6 +2417,12 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
   };
   const renameGroup = (id, name) => onUpdateGroups(groups.map(g => g.id === id ? { ...g, name } : g));
   const deleteGroup = (id) => { haptic.medium(); onUpdateGroups(groups.filter(g => g.id !== id)); };
+  const reorderGroup = (fromIdx, toIdx) => {
+    const arr = [...groups];
+    const [item] = arr.splice(fromIdx, 1);
+    arr.splice(toIdx, 0, item);
+    onUpdateGroups(arr);
+  };
   const toggleKeyInGroup = (groupId, key) => {
     haptic.light();
     onUpdateGroups(groups.map(g => {
@@ -2637,47 +2674,55 @@ function SettingsModal({ labels, onUpdate, groups, onUpdateGroups, onResetGroups
         {tab === 'groups' && (
           <>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
-              支出カテゴリをグループにまとめます。グループの合計が自動計算されます。
+              支出カテゴリをグループにまとめます。ドラッグで並び替えできます。
             </div>
 
-            {groups.map(g => (
-              <div key={g.id} className="group-setting-card">
-                <div className="group-setting-header">
-                  {editingGroup === g.id ? (
-                    <input className="settings-input" autoFocus
-                      value={g.name}
-                      onChange={e => renameGroup(g.id, e.target.value)}
-                      onBlur={() => setEditingGroup(null)}
-                      onKeyDown={e => e.key === 'Enter' && setEditingGroup(null)}
-                      style={{ flex: 1, fontSize: 13 }}
-                    />
-                  ) : (
-                    <span className="group-setting-name" onClick={() => setEditingGroup(g.id)}>
-                      {g.name}
-                    </span>
-                  )}
-                  <button className="group-setting-delete" onClick={() => deleteGroup(g.id)}>
-                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </div>
-                <div className="group-setting-keys">
-                  {[...EXPENSE_KEYS, ...customCats.customExpenseKeys].map(k => {
-                    const inThis = g.keys.includes(k);
-                    const inOther = !inThis && assignedKeys.has(k);
-                    return (
-                      <button key={k}
-                        className={`group-key-chip ${inThis ? 'active' : ''} ${inOther ? 'disabled' : ''}`}
-                        disabled={inOther}
-                        onClick={() => toggleKeyInGroup(g.id, k)}>
-                        {labels[k] || k}
+            <DragList
+              items={groups.map(g => g.id)}
+              onReorder={reorderGroup}
+              renderItem={(gId) => {
+                const g = groups.find(gr => gr.id === gId);
+                if (!g) return null;
+                return (
+                  <div className="group-setting-card-inner">
+                    <div className="group-setting-header">
+                      {editingGroup === g.id ? (
+                        <input className="settings-input" autoFocus
+                          value={g.name}
+                          onChange={e => renameGroup(g.id, e.target.value)}
+                          onBlur={() => setEditingGroup(null)}
+                          onKeyDown={e => e.key === 'Enter' && setEditingGroup(null)}
+                          style={{ flex: 1, fontSize: 13 }}
+                        />
+                      ) : (
+                        <span className="group-setting-name" onClick={() => setEditingGroup(g.id)}>
+                          {g.name}
+                        </span>
+                      )}
+                      <button className="group-setting-delete" onClick={() => deleteGroup(g.id)}>
+                        <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
                       </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+                    </div>
+                    <div className="group-setting-keys">
+                      {[...EXPENSE_KEYS, ...customCats.customExpenseKeys].map(k => {
+                        const inThis = g.keys.includes(k);
+                        const inOther = !inThis && assignedKeys.has(k);
+                        return (
+                          <button key={k}
+                            className={`group-key-chip ${inThis ? 'active' : ''} ${inOther ? 'disabled' : ''}`}
+                            disabled={inOther}
+                            onClick={() => toggleKeyInGroup(g.id, k)}>
+                            {labels[k] || k}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              }}
+            />
 
             <div className="group-add-row">
               <input className="settings-input" placeholder="新しいグループ名..."

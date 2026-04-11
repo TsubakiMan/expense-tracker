@@ -1211,6 +1211,23 @@ html, body {
   margin-bottom: 10px;
 }
 
+/* Group items inside DragList */
+.cat-list .group-setting-card-inner {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border-radius: var(--radius-xs);
+  padding: 10px 12px;
+}
+
+.cat-list .group-setting-card-inner .group-setting-header {
+  margin-bottom: 8px;
+}
+
+.cat-list .group-setting-card-inner .group-setting-keys {
+  margin-top: 0;
+}
+
 .group-setting-header {
   display: flex;
   justify-content: space-between;
