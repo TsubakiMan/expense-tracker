@@ -542,7 +542,7 @@ export default function Home() {
       setViewMonth(cm);
 
       const cloud = result.settings || {};
-      const SETTINGS_KEYS = ['customLabels', 'categoryConfig', 'expenseGroups', 'customCategories'];
+      const SETTINGS_KEYS = ['customLabels', 'categoryConfig', 'expenseGroups', 'customCategories', 'categorySchedule'];
       const cloudHasData = SETTINGS_KEYS.some(k => cloud[k]);
 
       if (cloudHasData) {
